@@ -1,6 +1,7 @@
 name: Release
 
-# Signed APK releases (tags) + weekly OpenSSF Scorecard (isolated id-token job).
+# Publishes signed per-ABI release APKs to GitHub Releases (tag push or manual).
+# OpenSSF Scorecard runs weekly in the scorecard job (no push trigger).
 
 on:
   push:
@@ -11,7 +12,7 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: "Release tag (e.g. v1.0.0-alpha) — leave empty for Scorecard-only run"
+        description: "Release tag (e.g. v1.0.0-alpha) — leave empty for Scorecard-only"
         required: false
         default: ""
       run_scorecard:
@@ -30,6 +31,11 @@ jobs:
     permissions:
       contents: write
     runs-on: ubuntu-latest
+    env:
+      RELEASE_KEYSTORE_BASE64: ${{ secrets.RELEASE_KEYSTORE_BASE64 }}
+      RELEASE_KEYSTORE_PASSWORD: ${{ secrets.RELEASE_KEYSTORE_PASSWORD }}
+      RELEASE_KEY_ALIAS: ${{ secrets.RELEASE_KEY_ALIAS }}
+      RELEASE_KEY_PASSWORD: ${{ secrets.RELEASE_KEY_PASSWORD }}
     steps:
       - uses: actions/checkout@v4
 
@@ -44,46 +50,76 @@ jobs:
       - name: Create local.properties
         run: echo "sdk.dir=${ANDROID_SDK_ROOT}" >> local.properties
 
-      - name: Verify release signing secrets
-        env:
-          RELEASE_KEYSTORE_BASE64: ${{ secrets.RELEASE_KEYSTORE_BASE64 }}
+      - name: Verify signing secrets
         run: |
-          if [ -z "$RELEASE_KEYSTORE_BASE64" ]; then
-            echo "::error::RELEASE_KEYSTORE_BASE64 secret is not set. See README → Security → CI signing."
-            exit 1
+          missing=0
+          for var in RELEASE_KEYSTORE_BASE64 RELEASE_KEYSTORE_PASSWORD RELEASE_KEY_ALIAS; do
+            if [ -z "${!var}" ]; then
+              echo "::error::$var is not set. See README → Security → CI signing."
+              missing=1
+            fi
+          done
+          exit "$missing"
+
+      - name: Resolve release tag
+        id: meta
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            TAG="${{ inputs.tag }}"
+          else
+            TAG="${GITHUB_REF#refs/tags/}"
           fi
+          VERSION="${TAG#v}"
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "prerelease=$([[ "$TAG" == *-* ]] && echo true || echo false)" >> "$GITHUB_OUTPUT"
 
       - name: Assemble signed release APKs (all ABIs)
-        env:
-          RELEASE_KEYSTORE_BASE64: ${{ secrets.RELEASE_KEYSTORE_BASE64 }}
-          RELEASE_KEYSTORE_PASSWORD: ${{ secrets.RELEASE_KEYSTORE_PASSWORD }}
-          RELEASE_KEY_ALIAS: ${{ secrets.RELEASE_KEY_ALIAS }}
-          RELEASE_KEY_PASSWORD: ${{ secrets.RELEASE_KEY_PASSWORD }}
         run: ./gradlew :app:assembleRelease --stacktrace --no-daemon
 
       - name: Verify APK signatures
         run: |
           APKSIGNER=$(find "${ANDROID_SDK_ROOT}/build-tools" -name apksigner -type f | sort -V | tail -1)
+          found=0
           for apk in app/build/outputs/apk/release/*-release.apk; do
+            [ -f "$apk" ] || continue
+            found=1
             echo "Verifying $apk"
             "$APKSIGNER" verify --verbose "$apk"
           done
+          if [ "$found" -eq 0 ]; then
+            echo "::error::No release APKs found after assembleRelease"
+            exit 1
+          fi
 
-      - name: Collect release APKs
+      - name: Package APKs with checksums
+        id: package
         run: |
+          VERSION="${{ steps.meta.outputs.version }}"
           mkdir -p dist/release
-          cp app/build/outputs/apk/release/*-release.apk dist/release/
+          shopt -s nullglob
+          for apk in app/build/outputs/apk/release/*-release.apk; do
+            abi=$(basename "$apk" | sed -E 's/^app-|-release\.apk$//g')
+            out="dist/release/pgp-shield-${VERSION}-${abi}.apk"
+            cp "$apk" "$out"
+            sha256sum "$out" >> dist/release/SHA256SUMS.txt
+            echo "- \`pgp-shield-${VERSION}-${abi}.apk\` — **${abi}**" >> dist/release/ABI_LIST.md
+          done
           ls -lh dist/release/
+          cat dist/release/SHA256SUMS.txt
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
-          name: PGP Shield ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
+          tag_name: ${{ steps.meta.outputs.tag }}
+          name: PGP Shield ${{ steps.meta.outputs.version }}
           generate_release_notes: true
-          files: dist/release/*.apk
-          draft: false
-          prerelease: ${{ contains(github.ref_name, '-') || contains(github.event.inputs.tag, '-') }}
+          prerelease: ${{ steps.meta.outputs.prerelease == 'true' }}
+          body_path: dist/release/ABI_LIST.md
+          files: |
+            dist/release/pgp-shield-*.apk
+            dist/release/SHA256SUMS.txt
+          fail_on_unmatched_files: true
 
   scorecard:
     if: >
