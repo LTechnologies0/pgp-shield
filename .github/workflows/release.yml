@@ -12,7 +12,7 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: "Release tag (e.g. v1.0.0-alpha) — leave empty for Scorecard-only"
+        description: "Release tag (e.g. v1.0.0)"
         required: false
         default: ""
       run_scorecard:
@@ -72,7 +72,6 @@ jobs:
           VERSION="${TAG#v}"
           echo "tag=$TAG" >> "$GITHUB_OUTPUT"
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
-          echo "prerelease=$([[ "$TAG" == *-* ]] && echo true || echo false)" >> "$GITHUB_OUTPUT"
 
       - name: Assemble signed release APKs (all ABIs)
         run: ./gradlew :app:assembleRelease --stacktrace --no-daemon
@@ -114,7 +113,8 @@ jobs:
           tag_name: ${{ steps.meta.outputs.tag }}
           name: PGP Shield ${{ steps.meta.outputs.version }}
           generate_release_notes: true
-          prerelease: ${{ steps.meta.outputs.prerelease == 'true' }}
+          prerelease: false
+          latest: true
           body_path: dist/release/ABI_LIST.md
           files: |
             dist/release/pgp-shield-*.apk

@@ -29,7 +29,7 @@ dokka {
     dokkaPublications.html {
         moduleName.set("PGP Shield")
         moduleVersion.set(
-            providers.gradleProperty("VERSION_NAME").orElse("1.0.0-alpha"),
+            providers.gradleProperty("VERSION_NAME").orElse("1.0.0"),
         )
         outputDirectory.set(layout.buildDirectory.dir("dokka/html"))
     }
