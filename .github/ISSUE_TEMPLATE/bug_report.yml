@@ -1,0 +1,40 @@
+name: Bug report
+description: Report unexpected behavior in PGP Shield
+title: "[Bug]: "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: Thanks for taking the time to report a bug.
+  - type: input
+    id: version
+    attributes:
+      label: PGP Shield version
+      placeholder: "1.0.0-alpha"
+    validations:
+      required: true
+  - type: input
+    id: device
+    attributes:
+      label: Device / Android version
+      placeholder: "Pixel 8 / Android 15"
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behavior
+    validations:
+      required: true

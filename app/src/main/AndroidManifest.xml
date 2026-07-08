@@ -1,0 +1,464 @@
+<?xml version="1.0" encoding="utf-8"?>
+
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+
+
+    <uses-permission android:name="android.permission.INTERNET" />
+
+
+
+    <permission
+
+        android:name="ltechnologies.onionphone.pgpshield.permission.API"
+
+        android:protectionLevel="signature" />
+
+
+
+    <application
+
+        android:name=".PgpShieldApplication"
+
+        android:allowBackup="false"
+
+        android:icon="@mipmap/ic_launcher"
+
+        android:label="@string/app_name"
+
+        android:supportsRtl="true"
+
+        android:theme="@style/Theme.PgpShield">
+
+
+
+        <activity
+
+            android:name=".ui.MainActivity"
+
+            android:exported="true"
+
+            android:theme="@style/Theme.PgpShield">
+
+            <intent-filter>
+
+                <action android:name="android.intent.action.MAIN" />
+
+                <category android:name="android.intent.category.LAUNCHER" />
+
+            </intent-filter>
+
+        </activity>
+
+
+
+        <activity
+
+            android:name=".api.GrantApiAccessActivity"
+
+            android:exported="false"
+
+            android:theme="@style/Theme.PgpShield" />
+
+        <activity
+            android:name=".overlay.OverlayPassphrasePromptActivity"
+            android:exported="false"
+            android:theme="@style/Theme.PgpShield" />
+
+
+
+        <activity
+
+            android:name=".intent.EncryptTextActivity"
+
+            android:exported="true"
+
+            android:theme="@style/Theme.PgpShield">
+
+            <intent-filter>
+
+                <action android:name="ltechnologies.onionphone.pgpshield.action.ENCRYPT_TEXT" />
+
+                <category android:name="android.intent.category.DEFAULT" />
+
+            </intent-filter>
+
+            <intent-filter>
+
+                <action android:name="org.sufficientlysecure.keychain.action.ENCRYPT_TEXT" />
+
+                <category android:name="android.intent.category.DEFAULT" />
+
+            </intent-filter>
+
+            <intent-filter android:label="@string/app_name">
+
+                <action android:name="android.intent.action.SEND" />
+
+                <category android:name="android.intent.category.DEFAULT" />
+
+                <data android:mimeType="text/plain" />
+
+            </intent-filter>
+
+            <intent-filter>
+
+                <action android:name="android.intent.action.PROCESS_TEXT" />
+
+                <category android:name="android.intent.category.DEFAULT" />
+
+                <data android:mimeType="text/plain" />
+
+            </intent-filter>
+
+        </activity>
+
+
+
+        <activity
+
+            android:name=".intent.DecryptTextActivity"
+
+            android:exported="true"
+
+            android:theme="@style/Theme.PgpShield">
+
+            <intent-filter>
+
+                <action android:name="ltechnologies.onionphone.pgpshield.action.DECRYPT_TEXT" />
+
+                <category android:name="android.intent.category.DEFAULT" />
+
+            </intent-filter>
+
+            <intent-filter>
+
+                <action android:name="org.sufficientlysecure.keychain.action.DECRYPT_TEXT" />
+
+                <category android:name="android.intent.category.DEFAULT" />
+
+            </intent-filter>
+
+            <intent-filter android:label="@string/app_name">
+
+                <action android:name="android.intent.action.SEND" />
+
+                <action android:name="android.intent.action.VIEW" />
+
+                <category android:name="android.intent.category.DEFAULT" />
+
+                <data android:mimeType="text/plain" />
+
+                <data android:mimeType="application/pgp-encrypted" />
+
+                <data android:mimeType="application/octet-stream" />
+
+            </intent-filter>
+
+            <intent-filter android:label="@string/app_name">
+
+                <action android:name="android.intent.action.VIEW" />
+
+                <category android:name="android.intent.category.DEFAULT" />
+
+                <data android:pathPattern=".*\\.asc" />
+
+                <data android:pathPattern=".*\\.gpg" />
+
+                <data android:pathPattern=".*\\.pgp" />
+
+            </intent-filter>
+
+        </activity>
+
+
+
+        <activity
+
+            android:name=".intent.EncryptFileActivity"
+
+            android:exported="true"
+
+            android:theme="@style/Theme.PgpShield">
+
+            <intent-filter android:label="@string/app_name">
+
+                <action android:name="android.intent.action.SEND" />
+
+                <category android:name="android.intent.category.DEFAULT" />
+
+                <data android:mimeType="*/*" />
+
+            </intent-filter>
+
+            <intent-filter>
+
+                <action android:name="ltechnologies.onionphone.pgpshield.action.ENCRYPT_DATA" />
+
+                <category android:name="android.intent.category.DEFAULT" />
+
+                <data android:mimeType="*/*" />
+
+            </intent-filter>
+
+            <intent-filter>
+
+                <action android:name="org.sufficientlysecure.keychain.action.ENCRYPT_DATA" />
+
+                <category android:name="android.intent.category.DEFAULT" />
+
+                <data android:mimeType="*/*" />
+
+            </intent-filter>
+
+        </activity>
+
+
+
+        <activity
+
+            android:name=".intent.DecryptFileActivity"
+
+            android:exported="true"
+
+            android:theme="@style/Theme.PgpShield">
+
+            <intent-filter android:label="@string/app_name">
+
+                <action android:name="android.intent.action.SEND" />
+
+                <action android:name="android.intent.action.VIEW" />
+
+                <category android:name="android.intent.category.DEFAULT" />
+
+                <data android:mimeType="application/pgp-encrypted" />
+
+                <data android:mimeType="application/pgp-signature" />
+
+                <data android:mimeType="application/octet-stream" />
+
+            </intent-filter>
+
+            <intent-filter>
+
+                <action android:name="ltechnologies.onionphone.pgpshield.action.DECRYPT_DATA" />
+
+                <category android:name="android.intent.category.DEFAULT" />
+
+                <data android:mimeType="*/*" />
+
+            </intent-filter>
+
+            <intent-filter>
+
+                <action android:name="org.sufficientlysecure.keychain.action.DECRYPT_DATA" />
+
+                <category android:name="android.intent.category.DEFAULT" />
+
+                <data android:mimeType="*/*" />
+
+            </intent-filter>
+
+            <intent-filter android:label="@string/app_name">
+
+                <action android:name="android.intent.action.SEND_MULTIPLE" />
+
+                <category android:name="android.intent.category.DEFAULT" />
+
+                <data android:mimeType="*/*" />
+
+            </intent-filter>
+
+        </activity>
+
+
+
+        <activity
+
+            android:name=".intent.EncryptMultipleActivity"
+
+            android:exported="true"
+
+            android:theme="@style/Theme.PgpShield">
+
+            <intent-filter android:label="@string/app_name">
+
+                <action android:name="android.intent.action.SEND_MULTIPLE" />
+
+                <category android:name="android.intent.category.DEFAULT" />
+
+                <data android:mimeType="*/*" />
+
+            </intent-filter>
+
+            <intent-filter>
+
+                <action android:name="org.sufficientlysecure.keychain.action.ENCRYPT_DATA" />
+
+                <category android:name="android.intent.category.DEFAULT" />
+
+            </intent-filter>
+
+        </activity>
+
+
+
+        <activity
+
+            android:name=".intent.EncryptFolderActivity"
+
+            android:exported="true"
+
+            android:theme="@style/Theme.PgpShield">
+
+            <intent-filter>
+
+                <action android:name="ltechnologies.onionphone.pgpshield.action.ENCRYPT_FOLDER" />
+
+                <category android:name="android.intent.category.DEFAULT" />
+
+            </intent-filter>
+
+        </activity>
+
+
+
+        <activity
+
+            android:name=".intent.ImportKeyActivity"
+
+            android:exported="true"
+
+            android:theme="@style/Theme.PgpShield">
+
+            <intent-filter>
+
+                <action android:name="org.sufficientlysecure.keychain.action.IMPORT_KEY" />
+
+                <category android:name="android.intent.category.DEFAULT" />
+
+            </intent-filter>
+
+            <intent-filter>
+
+                <action android:name="org.sufficientlysecure.keychain.action.IMPORT_KEY_FROM_KEYSERVER" />
+
+                <category android:name="android.intent.category.DEFAULT" />
+
+            </intent-filter>
+
+            <intent-filter>
+
+                <action android:name="android.intent.action.VIEW" />
+
+                <category android:name="android.intent.category.DEFAULT" />
+
+                <data android:mimeType="application/pgp-keys" />
+
+            </intent-filter>
+
+            <intent-filter>
+
+                <action android:name="android.intent.action.SEND" />
+
+                <category android:name="android.intent.category.DEFAULT" />
+
+                <data android:mimeType="application/pgp-keys" />
+
+            </intent-filter>
+
+        </activity>
+
+
+
+        <provider
+
+            android:name="androidx.core.content.FileProvider"
+
+            android:authorities="${applicationId}.fileprovider"
+
+            android:exported="false"
+
+            android:grantUriPermissions="true">
+
+            <meta-data
+
+                android:name="android.support.FILE_PROVIDER_PATHS"
+
+                android:resource="@xml/file_paths" />
+
+        </provider>
+
+
+
+        <provider
+
+            android:name=".provider.ExportedKeyProvider"
+
+            android:authorities="ltechnologies.onionphone.pgpshield.provider.exported"
+
+            android:exported="true" />
+
+
+
+        <service
+
+            android:name=".service.PgpShieldService"
+
+            android:exported="true"
+
+            android:permission="ltechnologies.onionphone.pgpshield.permission.API">
+
+            <intent-filter>
+
+                <action android:name="ltechnologies.onionphone.pgpshield.api.PgpShieldService" />
+
+            </intent-filter>
+
+        </service>
+
+
+
+        <service
+
+            android:name=".service.OpenPgpApiService"
+
+            android:exported="true">
+
+            <intent-filter>
+
+                <action android:name="org.openintents.openpgp.IOpenPgpService2" />
+
+            </intent-filter>
+
+        </service>
+
+
+
+        <service
+
+            android:name=".overlay.ShieldAccessibilityService"
+
+            android:exported="true"
+
+            android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE">
+
+            <intent-filter>
+
+                <action android:name="android.accessibilityservice.AccessibilityService" />
+
+            </intent-filter>
+
+            <meta-data
+
+                android:name="android.accessibilityservice"
+
+                android:resource="@xml/accessibility_service_config" />
+
+        </service>
+
+    </application>
+
+</manifest>
+
+
