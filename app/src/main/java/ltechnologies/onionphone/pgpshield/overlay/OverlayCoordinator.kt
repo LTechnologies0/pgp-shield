@@ -20,16 +20,9 @@ import android.view.Gravity
 import android.view.WindowManager
 import android.widget.FrameLayout
 import android.widget.Toast
-import androidx.compose.foundation.layout.padding
-import androidx.compose.material3.Button
-import androidx.compose.material3.Text
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
-import androidx.compose.ui.Modifier
-import androidx.compose.ui.platform.ComposeView
-import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
 import ltechnologies.onionphone.pgpshield.crypto.CryptoOperations
 import ltechnologies.onionphone.pgpshield.data.KeyRepository
 import ltechnologies.onionphone.pgpshield.data.SettingsRepository
@@ -70,6 +63,7 @@ class OverlayCoordinator @Inject constructor(
     private val paddingTemplateDao: PaddingTemplateDao,
     private val settingsRepository: SettingsRepository,
     private val passphraseSession: OverlayPassphraseSession,
+    private val decryptOverlayManager: DecryptOverlayManager,
 ) {
     private data class FocusTarget(
         val node: android.view.accessibility.AccessibilityNodeInfo,
@@ -92,12 +86,25 @@ class OverlayCoordinator @Inject constructor(
     /** Binds the live [AccessibilityService] used to render and act on the overlay. */
     fun attachService(acs: AccessibilityService) {
         service = acs
+        decryptOverlayManager.attach(acs)
+        passphraseSession.addUnlockListener(onPassphraseUnlocked)
     }
 
     /** Removes the overlay and detaches the service (e.g. on service destroy). */
     fun detachService() {
+        passphraseSession.removeUnlockListener(onPassphraseUnlocked)
         hideAll()
+        decryptOverlayManager.detach()
+        service?.clearOverlayWindowHost()
         service = null
+    }
+
+    private val onPassphraseUnlocked: (Long) -> Unit = { keyId ->
+        passphrasePromptedFor = null
+        setStatus("Key unlocked")
+        // Resume Oversec in-place decrypt as soon as the passphrase is available.
+        refreshDecryptOverlays(service?.rootInActiveWindow)
+        Timber.i("Overlay passphrase unlocked for %s", keyId.toULong().toString(16))
     }
 
     /** Returns `true` when there is a currently tracked editable focus target. */
@@ -115,8 +122,12 @@ class OverlayCoordinator @Inject constructor(
                 return@launch
             }
             val config = overlayConfigDao.get(packageName) ?: overlayConfigDao.get("*")
-            if (config?.enabled == true && settingsRepository.current().showOverlayButtons) {
-                showButtons(config)
+            if (config?.enabled == true) {
+                if (settingsRepository.current().showOverlayButtons) {
+                    showButtons(config)
+                } else {
+                    removeControlPanel()
+                }
             } else {
                 hideAll()
             }
@@ -137,7 +148,18 @@ class OverlayCoordinator @Inject constructor(
 
     /** Removes the overlay window and releases the tracked focus node. */
     fun hideAll() {
-        val wm = service?.getSystemService(WindowManager::class.java) ?: return
+        decryptOverlayManager.clearBubbles()
+        removeControlPanel()
+        focusTarget?.node?.recycle()
+        focusTarget = null
+    }
+
+    private fun removeControlPanel() {
+        val wm = service?.overlayWindowManager() ?: run {
+            overlayContainer = null
+            overlayStatusView = null
+            return
+        }
         overlayContainer?.let {
             try {
                 wm.removeView(it)
@@ -145,14 +167,55 @@ class OverlayCoordinator @Inject constructor(
             }
         }
         overlayContainer = null
-        focusTarget?.node?.recycle()
-        focusTarget = null
+        overlayStatusView = null
+    }
+
+    /**
+     * Oversec-style refresh: rescans the window for ciphertext bubbles and updates
+     * in-place decrypt overlays when a decrypt key is configured for this app.
+     */
+    private var passphrasePromptedFor: Long? = null
+
+    fun refreshDecryptOverlays(root: AccessibilityNodeInfo?) {
+        val pkg = currentPackage ?: return
+        val rootCopy = root?.let { AccessibilityNodeInfo.obtain(it) }
+        scope.launch {
+            try {
+                if (!settingsRepository.current().overlayGloballyEnabled) {
+                    decryptOverlayManager.clearBubbles()
+                    return@launch
+                }
+                val config = overlayConfigDao.get(pkg) ?: overlayConfigDao.get("*") ?: return@launch
+                val keyId = config.decryptKeyId ?: run {
+                    decryptOverlayManager.clearBubbles()
+                    return@launch
+                }
+                if (!config.enabled) {
+                    decryptOverlayManager.clearBubbles()
+                    return@launch
+                }
+                if (!passphraseSession.isUnlocked(keyId)) {
+                    if (passphrasePromptedFor != keyId) {
+                        passphrasePromptedFor = keyId
+                        requestPassphrasePrompt(keyId)
+                        setStatus("Unlock decrypt key for in-place decrypt")
+                    }
+                    return@launch
+                }
+                passphrasePromptedFor = null
+                decryptOverlayManager.refreshFromRoot(rootCopy, config)
+            } finally {
+                rootCopy?.recycle()
+            }
+        }
     }
 
     private fun showButtons(config: OverlayAppConfigEntity) {
         val acs = service ?: return
-        hideAll()
-        val wm = acs.getSystemService(WindowManager::class.java)
+        removeControlPanel()
+        val host = acs.overlayWindowHost() ?: return
+        val wm = host.windowManager
+        val ui = host.context
         val params = WindowManager.LayoutParams(
             WindowManager.LayoutParams.WRAP_CONTENT,
             WindowManager.LayoutParams.WRAP_CONTENT,
@@ -161,35 +224,105 @@ class OverlayCoordinator @Inject constructor(
                 WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN,
             PixelFormat.TRANSLUCENT,
         ).apply {
-            gravity = Gravity.END or Gravity.CENTER_VERTICAL
+            gravity = Gravity.TOP or Gravity.START
+            x = lastBubbleX
+            y = lastBubbleY
         }
 
-        val textSp = config.overlayTextSizeSp
-        val composeView = ComposeView(acs).apply {
-            setContent {
-                androidx.compose.foundation.layout.Column(Modifier.padding(4.dp)) {
-                    Button(onClick = { encryptFocusedField() }, modifier = Modifier.padding(2.dp)) {
-                        Text("Encrypt", fontSize = textSp.sp)
-                    }
-                    Button(onClick = { decryptFocusedField() }, modifier = Modifier.padding(2.dp)) {
-                        Text("Decrypt", fontSize = textSp.sp)
-                    }
-                    Button(onClick = { copyFocusedField() }, modifier = Modifier.padding(2.dp)) {
-                        Text("Copy", fontSize = textSp.sp)
-                    }
-                    Text(uiStatus, fontSize = (textSp - 1f).coerceAtLeast(10f).sp, modifier = Modifier.padding(2.dp))
-                    Button(onClick = { hideAll() }, modifier = Modifier.padding(2.dp)) {
-                        Text("Hide", fontSize = (textSp + 1f).sp)
-                    }
+        // Inflate from window context — ACS Context is non-visual on recent Android.
+        val density = ui.resources.displayMetrics.density
+        val pad = (6 * density).toInt()
+        val column = android.widget.LinearLayout(ui).apply {
+            orientation = android.widget.LinearLayout.VERTICAL
+            setPadding(pad, pad, pad, pad)
+            setBackgroundColor(0xCC1B1B1B.toInt())
+            alpha = config.overlayAlpha
+        }
+        fun addBtn(label: String, onClick: () -> Unit) {
+            column.addView(
+                android.widget.Button(ui).apply {
+                    text = label
+                    textSize = config.overlayTextSizeSp.coerceAtLeast(12f)
+                    setOnClickListener { onClick() }
+                    minimumHeight = (44 * density).toInt()
+                    minimumWidth = (96 * density).toInt()
+                },
+            )
+        }
+        addBtn("Encrypt") { encryptFocusedField() }
+        addBtn("Decrypt") { decryptFocusedField() }
+        addBtn("Scan") {
+            scope.launch {
+                val pkg = currentPackage
+                val cfg = pkg?.let { overlayConfigDao.get(it) ?: overlayConfigDao.get("*") }
+                val keyId = cfg?.decryptKeyId
+                if (keyId != null && !passphraseSession.isUnlocked(keyId)) {
+                    passphrasePromptedFor = null // allow re-prompt from explicit Scan
+                    requestPassphrasePrompt(keyId)
+                    setStatus("Unlock decrypt key, then Scan again")
+                    return@launch
                 }
+                refreshDecryptOverlays(acs.rootInActiveWindow)
             }
         }
-        val container = FrameLayout(acs)
-        container.alpha = config.overlayAlpha
-        container.addView(composeView)
-        wm.addView(container, params)
-        overlayContainer = container
+        addBtn("Copy") { copyFocusedField() }
+        val statusView = android.widget.TextView(ui).apply {
+            text = uiStatus
+            textSize = (config.overlayTextSizeSp - 1f).coerceAtLeast(10f)
+            setTextColor(0xFFFFFFFF.toInt())
+            setPadding(pad, pad / 2, pad, pad / 2)
+        }
+        column.addView(statusView)
+        overlayStatusView = statusView
+        addBtn("Hide") { hideAll() }
+
+        column.setOnTouchListener(
+            object : android.view.View.OnTouchListener {
+                private var startX = 0
+                private var startY = 0
+                private var touchX = 0f
+                private var touchY = 0f
+                override fun onTouch(v: android.view.View, event: android.view.MotionEvent): Boolean {
+                    when (event.action) {
+                        android.view.MotionEvent.ACTION_DOWN -> {
+                            startX = params.x
+                            startY = params.y
+                            touchX = event.rawX
+                            touchY = event.rawY
+                            return true
+                        }
+                        android.view.MotionEvent.ACTION_MOVE -> {
+                            params.x = startX + (event.rawX - touchX).toInt()
+                            params.y = startY + (event.rawY - touchY).toInt()
+                            lastBubbleX = params.x
+                            lastBubbleY = params.y
+                            try {
+                                wm.updateViewLayout(overlayContainer, params)
+                            } catch (_: Exception) {
+                            }
+                            return true
+                        }
+                    }
+                    return false
+                }
+            },
+        )
+        val container = FrameLayout(ui)
+        container.addView(column)
+        try {
+            wm.addView(container, params)
+            overlayContainer = container
+            Timber.i("Overlay controls shown for %s", config.packageName)
+        } catch (e: Exception) {
+            Timber.w(e, "Failed to show overlay controls")
+            overlayContainer = null
+            overlayStatusView = null
+        }
     }
+
+    private var lastBubbleX = 140
+    private var lastBubbleY = 160
+    private var overlayStatusView: android.widget.TextView? = null
 
     private fun encryptFocusedField() {
         scope.launch {
@@ -283,8 +416,16 @@ class OverlayCoordinator @Inject constructor(
 
     private suspend fun encodeText(text: String, config: OverlayAppConfigEntity, method: EncodingMethod): String? =
         when (method) {
-            EncodingMethod.ZERO_WIDTH ->
-                ZeroWidthEncoder.encode(text, visiblePrefix = ZeroWidthEncoder.stripInvisible(text))
+            EncodingMethod.ZERO_WIDTH -> {
+                val decoy = ZeroWidthEncoder.stripInvisible(text)
+                // Oversec-realistic: encrypt to recipients first, hide armor in zero-width payload.
+                val payload = if (hasGpgRecipients(config)) {
+                    gpgEncode(decoy, config) ?: return null
+                } else {
+                    decoy
+                }
+                ZeroWidthEncoder.encode(payload, visiblePrefix = decoy)
+            }
             EncodingMethod.PADDING -> {
                 val templates = paddingTemplateDao.observeAll().first()
                 val template = config.paddingTemplateId?.let { id ->
@@ -300,7 +441,10 @@ class OverlayCoordinator @Inject constructor(
 
     private suspend fun decodeText(text: String, config: OverlayAppConfigEntity, method: EncodingMethod): String? =
         when (method) {
-            EncodingMethod.ZERO_WIDTH -> ZeroWidthEncoder.decode(text)
+            EncodingMethod.ZERO_WIDTH -> {
+                val hidden = ZeroWidthEncoder.decode(text) ?: return null
+                if (hidden.contains("BEGIN PGP")) gpgDecode(hidden, config) else hidden
+            }
             EncodingMethod.PADDING -> {
                 val templates = paddingTemplateDao.observeAll().first()
                 val template = config.paddingTemplateId?.let { id ->
@@ -313,6 +457,9 @@ class OverlayCoordinator @Inject constructor(
             EncodingMethod.SYMMETRIC -> symmetricDecode(text, config)
             EncodingMethod.BASE64 -> Base64Encoder.decode(text)
         }
+
+    private fun hasGpgRecipients(config: OverlayAppConfigEntity): Boolean =
+        config.encryptKeyId != null || KeyIdParser.parseCsv(config.recipientKeyIds).isNotEmpty()
 
     private suspend fun decodeTextSmart(
         text: String,
@@ -462,6 +609,7 @@ class OverlayCoordinator @Inject constructor(
 
     private fun setStatus(message: String) {
         uiStatus = message
+        overlayStatusView?.text = message
         Timber.d("Overlay: %s", message)
     }
 

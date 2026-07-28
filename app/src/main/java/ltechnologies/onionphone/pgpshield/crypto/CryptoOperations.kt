@@ -37,6 +37,9 @@ import ltechnologies.onionphone.pgpshield.engine.SmartCardPort
 import ltechnologies.onionphone.pgpshield.engine.SymmetricCipher
 import ltechnologies.onionphone.pgpshield.engine.SymmetricDecryptRequest
 import ltechnologies.onionphone.pgpshield.engine.SymmetricEncryptRequest
+import ltechnologies.onionphone.pgpshield.engine.AuthenticateRequest
+import ltechnologies.onionphone.pgpshield.engine.PgpAuthenticator
+import ltechnologies.onionphone.pgpshield.engine.VerifyAuthenticationRequest
 import ltechnologies.onionphone.pgpshield.engine.UserIdEditRequest
 import ltechnologies.onionphone.pgpshield.engine.UserIdManager
 import ltechnologies.onionphone.pgpshield.engine.VerifyRequest
@@ -57,6 +60,7 @@ class CryptoOperations @Inject constructor() {
     private val decryptor = PgpDecryptor()
     private val signer = PgpSigner()
     private val verifier = PgpVerifier()
+    private val authenticator = PgpAuthenticator()
     private val passphraseChanger = KeyPassphraseChanger()
     private val subkeyAdder = SubkeyAdder()
     private val revocationCertGenerator = RevocationCertGenerator()
@@ -259,4 +263,34 @@ class CryptoOperations @Inject constructor() {
 
     /** Decrypts [ciphertext] using the S/MIME engine. */
     fun smimeDecrypt(ciphertext: ByteArray): ByteArray = smimeEngine.decrypt(ciphertext)
+
+    /**
+     * Signs an authentication [challenge] with the AUTHENTICATION subkey (GnuPG-style).
+     *
+     * @return Armored detached signature proving possession of the auth-capable key.
+     */
+    fun authenticate(
+        challenge: ByteArray,
+        secretArmored: ByteArray,
+        passphrase: CharArray,
+    ) = authenticator.authenticate(
+        AuthenticateRequest(
+            challenge = challenge,
+            secretKeyRingArmored = secretArmored,
+            passphrase = passphrase,
+        ),
+    )
+
+    /** Verifies an authentication signature over [challenge] against [publicArmored]. */
+    fun verifyAuthentication(
+        challenge: ByteArray,
+        signatureArmored: ByteArray,
+        publicArmored: ByteArray,
+    ) = authenticator.verify(
+        VerifyAuthenticationRequest(
+            challenge = challenge,
+            signatureArmored = signatureArmored,
+            publicKeyRingArmored = publicArmored,
+        ),
+    )
 }

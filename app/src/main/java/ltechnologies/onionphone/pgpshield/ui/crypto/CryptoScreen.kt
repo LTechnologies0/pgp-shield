@@ -69,7 +69,7 @@ import ltechnologies.onionphone.pgpshield.util.SecureScreen
 import kotlinx.coroutines.launch
 
 /** The selectable operation modes of the crypto screen. */
-enum class CryptoMode { ENCRYPT, DECRYPT, SIGN, VERIFY }
+enum class CryptoMode { ENCRYPT, DECRYPT, SIGN, VERIFY, AUTHENTICATE }
 
 /**
  * Top-level crypto screen composable.
@@ -183,6 +183,7 @@ fun CryptoScreen(
                                         CryptoMode.DECRYPT -> stringResource(R.string.crypto_tab_decrypt)
                                         CryptoMode.SIGN -> stringResource(R.string.crypto_tab_sign)
                                         CryptoMode.VERIFY -> stringResource(R.string.crypto_tab_verify)
+                                        CryptoMode.AUTHENTICATE -> stringResource(R.string.crypto_tab_authenticate)
                                     },
                                 )
                             },
@@ -240,6 +241,16 @@ fun CryptoScreen(
                                         pickSignatureFile.launch(arrayOf("*/*", "application/pgp-signature"))
                                     },
                                 )
+                                CryptoMode.AUTHENTICATE -> AuthenticatePanel(
+                                    state = state,
+                                    secretKeys = secretKeys,
+                                    secretKey = secretKey,
+                                    secretMenu = secretMenu,
+                                    onSecretMenuChange = { secretMenu = it },
+                                    keys = keys,
+                                    metrics = metrics,
+                                    viewModel = viewModel,
+                                )
                             }
                             state.fileStatus?.let {
                                 Text(it, style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(top = 8.dp))
@@ -261,7 +272,7 @@ private fun PayloadTypePicker(mode: CryptoMode, payload: CryptoPayload, onSelect
     val options = remember(mode) {
         buildList {
             add(CryptoPayload.TEXT)
-            add(CryptoPayload.FILE)
+            if (mode != CryptoMode.AUTHENTICATE) add(CryptoPayload.FILE)
             if (mode == CryptoMode.ENCRYPT) add(CryptoPayload.FOLDER)
         }
     }
@@ -576,6 +587,117 @@ private fun VerifyPanel(
         } else {
             state.signedInput.contains("BEGIN PGP")
         },
+    )
+}
+
+@Composable
+private fun AuthenticatePanel(
+    state: CryptoUiState,
+    secretKeys: List<KeySummary>,
+    secretKey: KeySummary?,
+    secretMenu: Boolean,
+    onSecretMenuChange: (Boolean) -> Unit,
+    keys: List<KeySummary>,
+    metrics: ltechnologies.onionphone.pgpshield.ui.components.AdaptiveMetrics,
+    viewModel: CryptoViewModel,
+) {
+    Text(
+        stringResource(R.string.crypto_authenticate_hint),
+        style = MaterialTheme.typography.bodySmall,
+        modifier = Modifier.padding(top = 8.dp),
+    )
+    if (secretKeys.isEmpty()) {
+        Text(
+            stringResource(R.string.crypto_no_secret_keys),
+            color = MaterialTheme.colorScheme.error,
+            modifier = Modifier.padding(top = 8.dp),
+        )
+        return
+    }
+    KeySelectDropdown(
+        label = stringResource(R.string.crypto_your_secret_key),
+        keys = secretKeys,
+        selectedId = secretKey?.masterKeyId,
+        onSelect = { id -> id?.let { viewModel.selectSecretKey(it) } },
+        expanded = secretMenu,
+        onExpandedChange = onSecretMenuChange,
+        emptyLabel = stringResource(R.string.common_select_key),
+        lineFormatter = ::formatKeySummaryLine,
+        modifier = Modifier.padding(top = 8.dp),
+    )
+    PassphraseField(state.passphrase, viewModel::setPassphrase)
+    AdaptiveTwoPane(
+        metrics = metrics,
+        modifier = Modifier.padding(top = 8.dp),
+        start = {
+            OutlinedTextField(
+                value = state.plaintext,
+                onValueChange = viewModel::setPlaintext,
+                label = { Text(stringResource(R.string.crypto_auth_challenge)) },
+                modifier = Modifier.fillMaxWidth().adaptiveTextFieldHeight(metrics = metrics),
+            )
+        },
+        end = {
+            OutlinedTextField(
+                value = state.output,
+                onValueChange = {},
+                readOnly = true,
+                label = { Text(stringResource(R.string.crypto_auth_signature)) },
+                modifier = Modifier.fillMaxWidth().adaptiveTextFieldHeight(metrics = metrics),
+            )
+        },
+    )
+    ActionButton(
+        label = stringResource(R.string.crypto_authenticate_action),
+        busy = state.isBusy,
+        onClick = viewModel::authenticate,
+        enabled = state.plaintext.isNotBlank() && state.secretKeyId != null && state.passphrase.isNotBlank(),
+    )
+    Text(
+        stringResource(R.string.crypto_verify_auth_hint),
+        style = MaterialTheme.typography.bodySmall,
+        modifier = Modifier.padding(top = 16.dp),
+    )
+    OutlinedTextField(
+        value = state.signedInput,
+        onValueChange = viewModel::setSignedInput,
+        label = { Text(stringResource(R.string.crypto_auth_signature)) },
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(top = 8.dp)
+            .adaptiveTextFieldHeight(minLines = 4, metrics = metrics),
+    )
+    KeyMultiSelectField(
+        label = stringResource(R.string.crypto_verify_with_public),
+        keys = keys,
+        selectedIds = state.recipientKeyIds,
+        onSelectionChange = viewModel::setRecipientKeyIds,
+        keyFilter = { !it.isRevoked },
+        modifier = Modifier.padding(top = 8.dp),
+    )
+    state.verifyResult?.let { result ->
+        val color = if (result.valid) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.error
+        Text(
+            if (result.valid) {
+                stringResource(R.string.crypto_auth_valid)
+            } else {
+                stringResource(R.string.crypto_auth_invalid)
+            },
+            color = color,
+            style = MaterialTheme.typography.titleMedium,
+            modifier = Modifier.padding(top = 8.dp),
+        )
+        result.signerLabel?.let {
+            Text(stringResource(R.string.crypto_signer_fmt, it), style = MaterialTheme.typography.bodyMedium)
+        }
+    }
+    ActionButton(
+        label = stringResource(R.string.crypto_verify_auth_action),
+        busy = state.isBusy,
+        onClick = viewModel::verifyAuthentication,
+        enabled = state.plaintext.isNotBlank() &&
+            state.signedInput.contains("BEGIN PGP") &&
+            state.recipientKeyIds.isNotEmpty(),
     )
 }
 

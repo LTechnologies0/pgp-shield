@@ -96,6 +96,12 @@ object ZeroWidthEncoder {
         }
     }
 
+    /**
+     * Returns `true` when [text] carries a PGP Shield zero-width payload (`PSH` magic).
+     * Ignores lone VS/emoji variation selectors so chat UI does not false-positive.
+     */
+    fun containsPayload(text: String): Boolean = text.indexOf(MAGIC_ZW) >= 0
+
     private fun encodeBytes(data: ByteArray, spread: Int): String {
         val sb = StringBuilder()
         var sinceVisible = 0
