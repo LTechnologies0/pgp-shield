@@ -96,7 +96,7 @@ class DecryptOverlayManager @Inject constructor(
             val hidden = ZeroWidthEncoder.decode(text)
             if (!hidden.isNullOrBlank()) {
                 if (hidden.contains("BEGIN PGP")) {
-                    return gpgDecode(hidden, config) ?: hidden
+                    return gpgDecode(hidden, config)
                 }
                 return hidden
             }
@@ -202,7 +202,7 @@ class DecryptOverlayManager @Inject constructor(
             try {
                 wm.addView(container, params)
                 bubbles += Bubble(container, fingerprint)
-                Timber.i("Oversec bubble: %s", plain.take(80))
+                Timber.d("Oversec bubble shown (%d chars)", plain.length)
             } catch (e: Exception) {
                 Timber.w(e, "Failed to add decrypt bubble")
             }

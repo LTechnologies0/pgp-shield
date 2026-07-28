@@ -42,11 +42,12 @@ class OverlayPassphrasePromptActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         WindowSecureHelper.bind(this, settingsRepository)
-        val keyId = intent.getLongExtra(EXTRA_KEY_ID, -1L)
-        if (keyId < 0L) {
+        if (!intent.hasExtra(EXTRA_KEY_ID)) {
             finish()
             return
         }
+        // OpenPGP key IDs are unsigned 64-bit; high bit set ⇒ negative Long (valid).
+        val keyId = intent.getLongExtra(EXTRA_KEY_ID, 0L)
         // Automation / instrumentation can unlock without IME quirks.
         intent.getStringExtra(EXTRA_PASSPHRASE)?.takeIf { it.isNotBlank() }?.let { prefill ->
             session.put(keyId, prefill.toCharArray())

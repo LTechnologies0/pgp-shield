@@ -95,6 +95,7 @@ class OverlayCoordinator @Inject constructor(
         passphraseSession.removeUnlockListener(onPassphraseUnlocked)
         hideAll()
         decryptOverlayManager.detach()
+        service?.clearOverlayWindowHost()
         service = null
     }
 
@@ -121,8 +122,12 @@ class OverlayCoordinator @Inject constructor(
                 return@launch
             }
             val config = overlayConfigDao.get(packageName) ?: overlayConfigDao.get("*")
-            if (config?.enabled == true && settingsRepository.current().showOverlayButtons) {
-                showButtons(config)
+            if (config?.enabled == true) {
+                if (settingsRepository.current().showOverlayButtons) {
+                    showButtons(config)
+                } else {
+                    removeControlPanel()
+                }
             } else {
                 hideAll()
             }
@@ -173,30 +178,35 @@ class OverlayCoordinator @Inject constructor(
 
     fun refreshDecryptOverlays(root: AccessibilityNodeInfo?) {
         val pkg = currentPackage ?: return
+        val rootCopy = root?.let { AccessibilityNodeInfo.obtain(it) }
         scope.launch {
-            if (!settingsRepository.current().overlayGloballyEnabled) {
-                decryptOverlayManager.clearBubbles()
-                return@launch
-            }
-            val config = overlayConfigDao.get(pkg) ?: overlayConfigDao.get("*") ?: return@launch
-            val keyId = config.decryptKeyId ?: run {
-                decryptOverlayManager.clearBubbles()
-                return@launch
-            }
-            if (!config.enabled) {
-                decryptOverlayManager.clearBubbles()
-                return@launch
-            }
-            if (passphraseSession.get(keyId) == null) {
-                if (passphrasePromptedFor != keyId) {
-                    passphrasePromptedFor = keyId
-                    requestPassphrasePrompt(keyId)
-                    setStatus("Unlock decrypt key for in-place decrypt")
+            try {
+                if (!settingsRepository.current().overlayGloballyEnabled) {
+                    decryptOverlayManager.clearBubbles()
+                    return@launch
                 }
-                return@launch
+                val config = overlayConfigDao.get(pkg) ?: overlayConfigDao.get("*") ?: return@launch
+                val keyId = config.decryptKeyId ?: run {
+                    decryptOverlayManager.clearBubbles()
+                    return@launch
+                }
+                if (!config.enabled) {
+                    decryptOverlayManager.clearBubbles()
+                    return@launch
+                }
+                if (!passphraseSession.isUnlocked(keyId)) {
+                    if (passphrasePromptedFor != keyId) {
+                        passphrasePromptedFor = keyId
+                        requestPassphrasePrompt(keyId)
+                        setStatus("Unlock decrypt key for in-place decrypt")
+                    }
+                    return@launch
+                }
+                passphrasePromptedFor = null
+                decryptOverlayManager.refreshFromRoot(rootCopy, config)
+            } finally {
+                rootCopy?.recycle()
             }
-            passphrasePromptedFor = null
-            decryptOverlayManager.refreshFromRoot(root, config)
         }
     }
 
@@ -246,7 +256,7 @@ class OverlayCoordinator @Inject constructor(
                 val pkg = currentPackage
                 val cfg = pkg?.let { overlayConfigDao.get(it) ?: overlayConfigDao.get("*") }
                 val keyId = cfg?.decryptKeyId
-                if (keyId != null && passphraseSession.get(keyId) == null) {
+                if (keyId != null && !passphraseSession.isUnlocked(keyId)) {
                     passphrasePromptedFor = null // allow re-prompt from explicit Scan
                     requestPassphrasePrompt(keyId)
                     setStatus("Unlock decrypt key, then Scan again")
@@ -279,7 +289,7 @@ class OverlayCoordinator @Inject constructor(
                             startY = params.y
                             touchX = event.rawX
                             touchY = event.rawY
-                            return false
+                            return true
                         }
                         android.view.MotionEvent.ACTION_MOVE -> {
                             params.x = startX + (event.rawX - touchX).toInt()
@@ -433,7 +443,7 @@ class OverlayCoordinator @Inject constructor(
         when (method) {
             EncodingMethod.ZERO_WIDTH -> {
                 val hidden = ZeroWidthEncoder.decode(text) ?: return null
-                if (hidden.contains("BEGIN PGP")) gpgDecode(hidden, config) ?: hidden else hidden
+                if (hidden.contains("BEGIN PGP")) gpgDecode(hidden, config) else hidden
             }
             EncodingMethod.PADDING -> {
                 val templates = paddingTemplateDao.observeAll().first()

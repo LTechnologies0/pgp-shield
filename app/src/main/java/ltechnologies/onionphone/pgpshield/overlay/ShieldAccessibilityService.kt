@@ -73,20 +73,19 @@ class ShieldAccessibilityService : AccessibilityService() {
             AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED,
             AccessibilityEvent.TYPE_VIEW_TEXT_CHANGED,
             -> {
-                if (overlayCoordinator.hasFocusTarget()) {
-                    // still refresh decrypt bubbles for Oversec in-place plaintext
-                } else {
-                    val now = SystemClock.uptimeMillis()
-                    if (now - lastContentRefreshAt < CONTENT_REFRESH_GAP_MS) return
-                    lastContentRefreshAt = now
-                    val root = rootInActiveWindow
-                    try {
-                        overlayCoordinator.refreshFocusedFieldFromRoot(root)
-                    } finally {
-                        root?.recycle()
+                if (!overlayCoordinator.hasFocusTarget()) {
+                    val now = SystemClock.elapsedRealtime()
+                    if (now - lastContentRefreshAt >= CONTENT_REFRESH_GAP_MS) {
+                        lastContentRefreshAt = now
+                        val root = rootInActiveWindow
+                        try {
+                            overlayCoordinator.refreshFocusedFieldFromRoot(root)
+                        } finally {
+                            root?.recycle()
+                        }
                     }
                 }
-                val now = SystemClock.uptimeMillis()
+                val now = SystemClock.elapsedRealtime()
                 if (now - lastDecryptRefreshAt >= DECRYPT_REFRESH_GAP_MS) {
                     lastDecryptRefreshAt = now
                     val root = rootInActiveWindow

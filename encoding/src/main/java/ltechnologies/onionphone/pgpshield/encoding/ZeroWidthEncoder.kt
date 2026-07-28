@@ -97,19 +97,10 @@ object ZeroWidthEncoder {
     }
 
     /**
-     * Returns `true` when [text] carries a PGP Shield zero-width payload (magic)
-     * or any mapped invisible code points (Oversec-style decoy + hidden bytes).
+     * Returns `true` when [text] carries a PGP Shield zero-width payload (`PSH` magic).
+     * Ignores lone VS/emoji variation selectors so chat UI does not false-positive.
      */
-    fun containsPayload(text: String): Boolean {
-        if (text.indexOf(MAGIC_ZW) >= 0) return true
-        var i = 0
-        while (i < text.length) {
-            val cp = text.codePointAt(i)
-            if (REVERSE_MAPPING.containsKey(cp)) return true
-            i = text.offsetByCodePoints(i, 1)
-        }
-        return false
-    }
+    fun containsPayload(text: String): Boolean = text.indexOf(MAGIC_ZW) >= 0
 
     private fun encodeBytes(data: ByteArray, spread: Int): String {
         val sb = StringBuilder()

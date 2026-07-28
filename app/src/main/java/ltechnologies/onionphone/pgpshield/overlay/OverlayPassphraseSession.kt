@@ -51,7 +51,15 @@ class OverlayPassphraseSession @Inject constructor() {
     }
 
     /** Returns `true` when a non-expired passphrase is cached for [keyId]. */
-    fun isUnlocked(keyId: Long): Boolean = get(keyId)?.also { it.fill('\u0000') } != null
+    fun isUnlocked(keyId: Long): Boolean {
+        val now = System.currentTimeMillis()
+        val entry = entries[keyId] ?: return false
+        if (entry.expiresAtMs <= now) {
+            clear(keyId)
+            return false
+        }
+        return true
+    }
 
     /** Stores a copy of [passphrase] for [keyId] with a fresh TTL, then notifies listeners. */
     fun put(keyId: Long, passphrase: CharArray) {

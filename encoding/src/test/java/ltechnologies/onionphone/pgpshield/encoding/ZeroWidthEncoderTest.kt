@@ -17,5 +17,6 @@ class ZeroWidthEncoderTest {
         val encoded = ZeroWidthEncoder.encode("secret", visiblePrefix = "Hello")
         assertEquals(true, ZeroWidthEncoder.containsPayload(encoded))
         assertEquals(false, ZeroWidthEncoder.containsPayload("Hello plain text"))
+        assertEquals(false, ZeroWidthEncoder.containsPayload("Hello 🔐 emoji only"))
     }
 }
