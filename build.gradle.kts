@@ -15,6 +15,12 @@ subprojects {
     pluginManager.withPlugin("com.android.application") {
         apply(plugin = "org.jetbrains.dokka")
     }
+    tasks.withType<Test>().configureEach {
+        // Isolate test JVMs so Robolectric / HttpServer non-daemon leftovers
+        // cannot pin the Gradle worker after the suite finishes.
+        maxParallelForks = 1
+        forkEvery = 1
+    }
 }
 
 dependencies {

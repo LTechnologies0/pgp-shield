@@ -68,7 +68,9 @@ class FakeKeyserver(
     }
 
     override fun close() {
-        server.stop(0)
+        runCatching { server.stop(0) }
         executor.shutdownNow()
+        // Give selector/dispatch threads a moment so Gradle workers can exit.
+        runCatching { executor.awaitTermination(2, java.util.concurrent.TimeUnit.SECONDS) }
     }
 }

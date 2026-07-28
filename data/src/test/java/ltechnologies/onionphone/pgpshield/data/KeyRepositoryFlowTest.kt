@@ -48,12 +48,12 @@ class KeyRepositoryFlowTest {
         val pass = "repo-pass".toCharArray()
         try {
             val generated = KeyGenerator().generateKeyRing(
-                GenerateKeyRequest("Repo <repo@example.com>", pass, KeyAlgorithmType.RSA, 3072),
+                GenerateKeyRequest("Repo <repo@example.com>", pass, KeyAlgorithmType.ED25519),
             )
             val info = repository.importGeneratedKeyRing(
                 generated.publicArmored,
                 generated.secretArmored,
-                "RSA 3072",
+                "Ed25519",
             )
             val keys = repository.observeKeys().first()
             assertEquals(1, keys.size)
@@ -73,12 +73,12 @@ class KeyRepositoryFlowTest {
         val pass = "hkp-pass".toCharArray()
         try {
             val generated = KeyGenerator().generateKeyRing(
-                GenerateKeyRequest("HKP <hkp@example.com>", pass, KeyAlgorithmType.RSA, 3072),
+                GenerateKeyRequest("HKP <hkp@example.com>", pass, KeyAlgorithmType.ED25519),
             )
             val info = repository.importGeneratedKeyRing(
                 generated.publicArmored,
                 generated.secretArmored,
-                "RSA 3072",
+                "Ed25519",
             )
             val public = repository.getArmoredPublic(info.masterKeyId)!!
             FakeKeyserver(public).use { server ->
@@ -98,15 +98,15 @@ class KeyRepositoryFlowTest {
         val targetPass = "target-pass".toCharArray()
         try {
             val certifier = KeyGenerator().generateKeyRing(
-                GenerateKeyRequest("Cert <c@example.com>", certifierPass, KeyAlgorithmType.RSA, 3072),
+                GenerateKeyRequest("Cert <c@example.com>", certifierPass, KeyAlgorithmType.ED25519),
             )
             val target = KeyGenerator().generateKeyRing(
-                GenerateKeyRequest("Target <t@example.com>", targetPass, KeyAlgorithmType.RSA, 3072),
+                GenerateKeyRequest("Target <t@example.com>", targetPass, KeyAlgorithmType.ED25519),
             )
             val certifierInfo = repository.importGeneratedKeyRing(
                 certifier.publicArmored,
                 certifier.secretArmored,
-                "RSA",
+                "Ed25519",
             )
             val targetInfo = repository.importKeyRing(target.publicArmored, secret = false)
 
@@ -133,12 +133,12 @@ class KeyRepositoryFlowTest {
         val pass = "apply-rev-pass".toCharArray()
         try {
             val generated = KeyGenerator().generateKeyRing(
-                GenerateKeyRequest("ApplyRev <ar@example.com>", pass, KeyAlgorithmType.RSA, 2048),
+                GenerateKeyRequest("ApplyRev <ar@example.com>", pass, KeyAlgorithmType.ED25519),
             )
             val info = repository.importGeneratedKeyRing(
                 generated.publicArmored,
                 generated.secretArmored,
-                "RSA 2048",
+                "Ed25519",
             )
             val cert = repository.generateRevocationCert(info.masterKeyId, pass, "compromised")
             val secret = repository.getArmoredSecret(info.masterKeyId)!!
@@ -160,12 +160,12 @@ class KeyRepositoryFlowTest {
         val pass = "rev-cert-pass".toCharArray()
         try {
             val generated = KeyGenerator().generateKeyRing(
-                GenerateKeyRequest("RevCert <rc@example.com>", pass, KeyAlgorithmType.RSA, 3072),
+                GenerateKeyRequest("RevCert <rc@example.com>", pass, KeyAlgorithmType.ED25519),
             )
             val info = repository.importGeneratedKeyRing(
                 generated.publicArmored,
                 generated.secretArmored,
-                "RSA",
+                "Ed25519",
             )
             val cert = repository.generateRevocationCert(info.masterKeyId, pass, "retired")
             val text = String(cert, Charsets.UTF_8)

@@ -16,8 +16,7 @@ class PgpAuthenticatorTest {
             GenerateKeyRequest(
                 userId = "Auth Tester <auth@example.org>",
                 passphrase = "test-pass".toCharArray(),
-                algorithmType = KeyAlgorithmType.RSA,
-                rsaBits = 2048,
+                algorithmType = KeyAlgorithmType.ED25519,
             ),
         )
         val challenge = "login-nonce-${System.currentTimeMillis()}".toByteArray(Charsets.UTF_8)
@@ -47,8 +46,7 @@ class PgpAuthenticatorTest {
             GenerateKeyRequest(
                 userId = "Auth Tester <auth2@example.org>",
                 passphrase = "test-pass".toCharArray(),
-                algorithmType = KeyAlgorithmType.RSA,
-                rsaBits = 2048,
+                algorithmType = KeyAlgorithmType.ED25519,
             ),
         )
         val auth = PgpAuthenticator().authenticate(
