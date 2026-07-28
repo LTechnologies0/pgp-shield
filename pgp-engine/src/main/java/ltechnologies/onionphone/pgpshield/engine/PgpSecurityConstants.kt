@@ -22,9 +22,21 @@ object PgpSecurityConstants {
     /** Hash algorithm for the SHA-1 checksum appended to secret key packets. */
     const val SECRET_KEY_SIGNATURE_CHECKSUM_HASH_ALGO = HashAlgorithmTags.SHA1
 
-    /** Hash algorithm used by the secret-key encryptor (S2K / string-to-key). */
-    const val SECRET_KEY_ENCRYPTOR_HASH_ALGO = HashAlgorithmTags.SHA256
+    /**
+     * Documented intent for secret-key S2K hash. Live encryptors still use SHA-1
+     * (OpenPGP/S2K common practice via [PgpOperators.secretKeyEncryptor]); keep
+     * this constant in sync if the encryptor switches digests.
+     */
+    const val SECRET_KEY_ENCRYPTOR_HASH_ALGO = HashAlgorithmTags.SHA1
 
     /** Symmetric cipher for passphrase-protected secret key packets. */
     const val SECRET_KEY_ENCRYPTOR_SYMMETRIC_ALGO = SymmetricKeyAlgorithmTags.AES_256
+
+    /**
+     * Encoded S2K iteration count (0–255) for secret-key protection.
+     *
+     * 255 ≈ 65 011 712 iterations — interoperable with GnuPG/OpenKeychain and
+     * much stronger than BC's default 96 (65 536).
+     */
+    const val SECRET_KEY_ENCRYPTOR_S2K_COUNT = 255
 }

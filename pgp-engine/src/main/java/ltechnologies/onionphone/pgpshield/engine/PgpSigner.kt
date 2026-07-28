@@ -76,14 +76,23 @@ class PgpSigner {
 
         sigGen.init(org.bouncycastle.openpgp.PGPSignature.CANONICAL_TEXT_DOCUMENT, privateKey)
 
-        val canonical = canonicalizeCleartext(request.data)
-        sigGen.update(canonical)
+        // Hash CRLF-canonical text (no trailing CRLF after last line). Write LF
+        // line endings in the armor body like GnuPG; verify re-canonicalizes.
+        val hashed = PgpCleartext.canonicalize(request.data)
+        sigGen.update(hashed)
         val signature = sigGen.generate()
+        val display = PgpCleartext.displayForm(hashed)
+        // Preserve a terminating newline in the cleartext section for readers.
+        val displayWithNl = if (display.isEmpty() || display.last() == '\n'.code.toByte()) {
+            display
+        } else {
+            display + "\n".toByteArray(Charsets.UTF_8)
+        }
 
         val armored = ByteArrayOutputStream().use { out ->
             ArmoredOutputStream(out).use { armor ->
                 armor.beginClearText(hashAlgorithm)
-                armor.write(canonical)
+                armor.write(displayWithNl)
                 armor.endClearText()
                 signature.encode(armor)
             }
@@ -100,12 +109,5 @@ class PgpSigner {
             if (sk.isSigningKey) return sk
         }
         return ring.secretKey
-    }
-
-    /** Canonicalizes UTF-8 cleartext for OpenPGP text signatures. */
-    private fun canonicalizeCleartext(data: ByteArray): ByteArray {
-        var text = data.toString(Charsets.UTF_8).replace("\r\n", "\n").replace("\r", "\n")
-        text = text.lines().joinToString("\n") { it.trimEnd() } + "\n"
-        return text.toByteArray(Charsets.UTF_8)
     }
 }

@@ -92,6 +92,7 @@ class KeyGenerator {
 
         val hashedSubpackets = PGPSignatureSubpacketGenerator().apply {
             setKeyFlags(false, KeyFlags.CERTIFY_OTHER or KeyFlags.SIGN_DATA)
+            PgpAlgorithmPolicy.applyInteropPreferences(this, masterPair.publicKey)
         }.generate()
         val unhashedSubpackets = PGPSignatureSubpacketGenerator().apply {
             addSignerUserID(false, request.userId)

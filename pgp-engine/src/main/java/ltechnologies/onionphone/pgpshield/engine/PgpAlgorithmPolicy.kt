@@ -8,10 +8,13 @@ package ltechnologies.onionphone.pgpshield.engine
  */
 
 import ltechnologies.onionphone.pgpshield.engine.model.KeyRingInfo
+import org.bouncycastle.bcpg.CompressionAlgorithmTags
 import org.bouncycastle.bcpg.HashAlgorithmTags
 import org.bouncycastle.bcpg.PublicKeyAlgorithmTags
 import org.bouncycastle.bcpg.SymmetricKeyAlgorithmTags
+import org.bouncycastle.bcpg.sig.Features
 import org.bouncycastle.openpgp.PGPPublicKey
+import org.bouncycastle.openpgp.PGPSignatureSubpacketGenerator
 
 /** Allowed algorithms, defaults, and key-ring validation for OpenPGP operations. */
 object PgpAlgorithmPolicy {
@@ -81,16 +84,73 @@ object PgpAlgorithmPolicy {
     const val defaultElGamalBits: Int = 3072
 
     /**
+     * Preferred symmetric algorithms advertised on self-signatures (AES family only).
+     *
+     * Listed strongest-first so peers that honor preferences pick AES-256.
+     */
+    val preferredSymmetricAlgorithms: IntArray = intArrayOf(
+        SymmetricKeyAlgorithmTags.AES_256,
+        SymmetricKeyAlgorithmTags.AES_192,
+        SymmetricKeyAlgorithmTags.AES_128,
+    )
+
+    /**
+     * Preferred compression algorithms (uncompressed first — matches our encryptor).
+     */
+    val preferredCompressionAlgorithms: IntArray = intArrayOf(
+        CompressionAlgorithmTags.UNCOMPRESSED,
+        CompressionAlgorithmTags.ZIP,
+        CompressionAlgorithmTags.ZLIB,
+    )
+
+    /**
+     * Preferred hash algorithms for a signing [key], strongest/curve-safe first.
+     *
+     * Puts [signatureHashForPublicKey] first so ECDSA P-384/P-521 peers do not
+     * fall back to an undersized digest.
+     */
+    fun preferredHashAlgorithms(key: PGPPublicKey): IntArray {
+        val primary = signatureHashForPublicKey(key)
+        val rest = intArrayOf(
+            HashAlgorithmTags.SHA512,
+            HashAlgorithmTags.SHA384,
+            HashAlgorithmTags.SHA256,
+        ).filter { it != primary }
+        return (listOf(primary) + rest).toIntArray()
+    }
+
+    /**
+     * Adds GnuPG/OpenKeychain-compatible preference and Features subpackets.
+     *
+     * Without these, GnuPG warns that AES-256 is "not found in recipient
+     * preferences" and older encryptors may omit MDC.
+     */
+    fun applyInteropPreferences(hashed: PGPSignatureSubpacketGenerator, masterPublic: PGPPublicKey) {
+        hashed.setPreferredSymmetricAlgorithms(false, preferredSymmetricAlgorithms)
+        hashed.setPreferredHashAlgorithms(false, preferredHashAlgorithms(masterPublic))
+        hashed.setPreferredCompressionAlgorithms(false, preferredCompressionAlgorithms)
+        hashed.setFeature(false, Features.FEATURE_MODIFICATION_DETECTION)
+    }
+
+    /**
      * Primary key types that can be generated on Android.
      *
-     * DSA/ElGamal is excluded because the Android BC JCA provider lacks ElGamal key generation.
+     * DSA/ElGamal is excluded (Android JCA lacks ElGamal generation).
+     * Ed448/X448 use OpenPGP algorithm tags 28/26 that GnuPG 2.4 and
+     * OpenKeychain still skip on import — keep them off the UI.
      */
     val androidGeneratableKeyTypes: Set<KeyAlgorithmType> =
-        KeyAlgorithmType.entries.toSet() - KeyAlgorithmType.DSA_ELGAMAL
+        KeyAlgorithmType.entries.toSet() -
+            KeyAlgorithmType.DSA_ELGAMAL -
+            KeyAlgorithmType.ED448
 
-    /** Subkey types generatable on Android (excludes ElGamal encrypt subkeys). */
+    /** Subkey types generatable on Android (excludes ElGamal and non-portable X448/Ed448). */
     val androidGeneratableSubkeyTypes: Set<SubkeyType> =
-        SubkeyType.entries.toSet() - SubkeyType.ENCRYPT_ELGAMAL
+        SubkeyType.entries.toSet() -
+            SubkeyType.ENCRYPT_ELGAMAL -
+            SubkeyType.ENCRYPT_X448 -
+            SubkeyType.SIGN_ED448 -
+            SubkeyType.AUTH_ED448
 
     /**
      * Validates [info] against policy (algorithms, revocation).

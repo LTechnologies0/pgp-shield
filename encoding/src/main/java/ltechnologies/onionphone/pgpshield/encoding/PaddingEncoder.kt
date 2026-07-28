@@ -16,11 +16,18 @@ class PaddingEncoder {
     /**
      * Extracts hidden plaintext from [encoded] if it matches the template marker.
      *
+     * Newlines are normalized to LF before matching so messenger CRLF rewriting
+     * does not break decode.
+     *
      * @return Payload after the template block, or `null` if the prefix does not match.
      */
     fun decode(encoded: String, templateTitle: String, templateBody: String): String? {
-        val marker = "$templateTitle\n\n$templateBody\n\n"
-        if (!encoded.startsWith(marker)) return null
-        return encoded.removePrefix(marker)
+        val normalized = normalizeNewlines(encoded)
+        val marker = normalizeNewlines("$templateTitle\n\n$templateBody\n\n")
+        if (!normalized.startsWith(marker)) return null
+        return normalized.removePrefix(marker)
     }
+
+    private fun normalizeNewlines(text: String): String =
+        text.replace("\r\n", "\n").replace("\r", "\n")
 }

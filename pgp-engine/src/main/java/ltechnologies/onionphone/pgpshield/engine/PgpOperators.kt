@@ -78,13 +78,15 @@ object PgpOperators {
      * @param useBcLightweight Select BC or JCA encryptor implementation.
      */
     fun secretKeyEncryptor(passphrase: CharArray, useBcLightweight: Boolean): PBESecretKeyEncryptor {
-        val digestCalc = JcaPlatform.digestCalculators.get(HashAlgorithmTags.SHA1)
+        val digestCalc = JcaPlatform.digestCalculators.get(
+            PgpSecurityConstants.SECRET_KEY_ENCRYPTOR_HASH_ALGO,
+        )
+        val encAlg = PgpSecurityConstants.SECRET_KEY_ENCRYPTOR_SYMMETRIC_ALGO
+        val s2kCount = PgpSecurityConstants.SECRET_KEY_ENCRYPTOR_S2K_COUNT
         return if (useBcLightweight) {
-            BcPBESecretKeyEncryptorBuilder(SymmetricKeyAlgorithmTags.AES_256, digestCalc)
-                .build(passphrase)
+            BcPBESecretKeyEncryptorBuilder(encAlg, digestCalc, s2kCount).build(passphrase)
         } else {
-            JcePBESecretKeyEncryptorBuilder(SymmetricKeyAlgorithmTags.AES_256, digestCalc)
-                .build(passphrase)
+            JcePBESecretKeyEncryptorBuilder(encAlg, digestCalc, s2kCount).build(passphrase)
         }
     }
 

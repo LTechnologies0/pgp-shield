@@ -132,6 +132,7 @@ class UserIdManager {
             setSignatureCreationTime(true, now)
             setKeyFlags(true, flags)
             setPrimaryUserID(false, primary)
+            PgpAlgorithmPolicy.applyInteropPreferences(this, publicKey)
         }.generate()
         val sigGen = PGPSignatureGenerator(
             PgpOperators.contentSignerBuilder(publicKey, useBc),

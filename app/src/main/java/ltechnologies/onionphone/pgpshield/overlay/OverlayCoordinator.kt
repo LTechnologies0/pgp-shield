@@ -244,9 +244,10 @@ class OverlayCoordinator @Inject constructor(
             val config = overlayConfigDao.get(pkg) ?: return
             val method = EncodingRegistry.parseId(config.encodingMethod)
             if (isEncrypt && method == EncodingMethod.ZERO_WIDTH) {
-                val visible = ZeroWidthEncoder.stripInvisible(text)
+                val visible = ZeroWidthEncoder.visibleCover(text)
                 if (visible.length < config.minDecoyChars) {
                     setStatus("Decoy too short (${visible.length}/${config.minDecoyChars})")
+                    return
                 }
             }
             val result = withContext(Dispatchers.Default) {
@@ -283,15 +284,19 @@ class OverlayCoordinator @Inject constructor(
 
     private suspend fun encodeText(text: String, config: OverlayAppConfigEntity, method: EncodingMethod): String? =
         when (method) {
-            EncodingMethod.ZERO_WIDTH ->
-                ZeroWidthEncoder.encode(text, visiblePrefix = ZeroWidthEncoder.stripInvisible(text))
+            EncodingMethod.ZERO_WIDTH -> {
+                // Prefer decoded payload when re-encoding so we never nest ZW frames.
+                val cover = ZeroWidthEncoder.visibleCover(text)
+                val payload = ZeroWidthEncoder.decode(text) ?: cover
+                ZeroWidthEncoder.encode(payload, visiblePrefix = cover)
+            }
             EncodingMethod.PADDING -> {
                 val templates = paddingTemplateDao.observeAll().first()
                 val template = config.paddingTemplateId?.let { id ->
                     templates.firstOrNull { it.templateId == id }
                 } ?: templates.firstOrNull()
-                if (template == null) text
-                else paddingEncoder.encode(text, template.title, template.content)
+                    ?: return null
+                paddingEncoder.encode(text, template.title, template.content)
             }
             EncodingMethod.GPG -> gpgEncode(text, config)
             EncodingMethod.SYMMETRIC -> symmetricEncode(text, config)
@@ -407,7 +412,10 @@ class OverlayCoordinator @Inject constructor(
         config: OverlayAppConfigEntity,
         onlyClipboard: Boolean,
     ) {
-        val safeValue = sanitizeForInput(value)
+        val safeValue = sanitizeForInput(value) ?: run {
+            setStatus("Encoded output exceeds size limit")
+            return
+        }
         if (config.composeViaClipboard || onlyClipboard) {
             val acs = service ?: return
             SensitiveClipboard.copy(acs, "pgp-overlay", safeValue, clearAfterMs = 30_000L)
@@ -507,7 +515,9 @@ class OverlayCoordinator @Inject constructor(
         return when {
             trimmed.startsWith("-----BEGIN PGP MESSAGE-----") -> listOf(EncodingMethod.GPG, EncodingMethod.BASE64)
             trimmed.startsWith("-----BEGIN PGP SIGNED MESSAGE-----") -> listOf(EncodingMethod.GPG, EncodingMethod.ZERO_WIDTH)
-            trimmed.startsWith("U2FsdGVkX1") -> listOf(EncodingMethod.SYMMETRIC, EncodingMethod.BASE64)
+            // SymmetricCipher magic OS1\0 → Base64 "T1MxAA…"; U2FsdGVkX1 is OpenSSL Salted__.
+            trimmed.startsWith("T1MxAA") || trimmed.startsWith("U2FsdGVkX1") ->
+                listOf(EncodingMethod.SYMMETRIC, EncodingMethod.BASE64)
             ZeroWidthEncoder.stripInvisible(trimmed) != trimmed -> listOf(EncodingMethod.ZERO_WIDTH, EncodingMethod.PADDING)
             trimmed.matches(Regex("^[A-Za-z0-9+/=\\r\\n]+$")) -> listOf(
                 EncodingMethod.BASE64,
@@ -524,10 +534,12 @@ class OverlayCoordinator @Inject constructor(
         }
     }
 
-    private fun sanitizeForInput(value: String): String {
-        // ponytail: keep text input safe for IME/accessibility injection
+    private fun sanitizeForInput(value: String): String? {
+        // Keep text input safe for IME/accessibility injection. Fail closed on
+        // oversized output so we never silently cut ASCII armor (END/CRC).
         val noNull = value.replace("\u0000", "")
-        return if (noNull.length > 200_000) noNull.take(200_000) else noNull
+        if (noNull.length > 200_000) return null
+        return noNull
     }
 
     private fun findBestEditableNode(root: AccessibilityNodeInfo): AccessibilityNodeInfo? {
