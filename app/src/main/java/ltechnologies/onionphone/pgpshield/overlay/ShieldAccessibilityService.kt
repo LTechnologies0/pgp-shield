@@ -25,12 +25,30 @@ class ShieldAccessibilityService : AccessibilityService() {
 
     private var lastPackage: String? = null
     private var lastContentRefreshAt = 0L
+    private var lastDecryptRefreshAt = 0L
 
     /** Routes accessibility events to the [OverlayCoordinator]. */
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {
         if (event == null) return
         val pkg = event.packageName?.toString() ?: return
-        if (pkg == packageName) return
+        // Own package: still refresh Oversec decrypt bubbles (e.g. demo ciphertext screens),
+        // but skip encrypt-field tracking to avoid feedback loops.
+        if (pkg == packageName) {
+            when (event.eventType) {
+                AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED,
+                AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED,
+                AccessibilityEvent.TYPE_VIEW_TEXT_CHANGED,
+                -> {
+                    val now = SystemClock.elapsedRealtime()
+                    if (now - lastDecryptRefreshAt >= 500L) {
+                        lastDecryptRefreshAt = now
+                        overlayCoordinator.onForegroundAppChanged(pkg)
+                        overlayCoordinator.refreshDecryptOverlays(rootInActiveWindow)
+                    }
+                }
+            }
+            return
+        }
 
         if (pkg != lastPackage) {
             lastPackage = pkg
@@ -52,16 +70,31 @@ class ShieldAccessibilityService : AccessibilityService() {
                     source?.recycle()
                 }
             }
-            AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED -> {
-                if (overlayCoordinator.hasFocusTarget()) return
+            AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED,
+            AccessibilityEvent.TYPE_VIEW_TEXT_CHANGED,
+            -> {
+                if (overlayCoordinator.hasFocusTarget()) {
+                    // still refresh decrypt bubbles for Oversec in-place plaintext
+                } else {
+                    val now = SystemClock.uptimeMillis()
+                    if (now - lastContentRefreshAt < CONTENT_REFRESH_GAP_MS) return
+                    lastContentRefreshAt = now
+                    val root = rootInActiveWindow
+                    try {
+                        overlayCoordinator.refreshFocusedFieldFromRoot(root)
+                    } finally {
+                        root?.recycle()
+                    }
+                }
                 val now = SystemClock.uptimeMillis()
-                if (now - lastContentRefreshAt < CONTENT_REFRESH_GAP_MS) return
-                lastContentRefreshAt = now
-                val root = rootInActiveWindow
-                try {
-                    overlayCoordinator.refreshFocusedFieldFromRoot(root)
-                } finally {
-                    root?.recycle()
+                if (now - lastDecryptRefreshAt >= DECRYPT_REFRESH_GAP_MS) {
+                    lastDecryptRefreshAt = now
+                    val root = rootInActiveWindow
+                    try {
+                        overlayCoordinator.refreshDecryptOverlays(root)
+                    } finally {
+                        root?.recycle()
+                    }
                 }
             }
             AccessibilityEvent.TYPE_VIEW_CLICKED -> {
@@ -103,5 +136,6 @@ class ShieldAccessibilityService : AccessibilityService() {
 
     companion object {
         private const val CONTENT_REFRESH_GAP_MS = 750L
+        private const val DECRYPT_REFRESH_GAP_MS = 1200L
     }
 }

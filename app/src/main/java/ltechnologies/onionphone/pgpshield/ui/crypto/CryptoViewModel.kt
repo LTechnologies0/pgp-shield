@@ -125,6 +125,9 @@ class CryptoViewModel @Inject constructor(
 
     /** Reacts to a mode change, downgrading FOLDER payloads for non-encrypt modes. */
     fun onModeChanged(mode: CryptoMode) {
+        if (mode == CryptoMode.AUTHENTICATE && _uiState.value.payload != CryptoPayload.TEXT) {
+            setPayload(CryptoPayload.TEXT)
+        }
         if (mode != CryptoMode.ENCRYPT && _uiState.value.payload == CryptoPayload.FOLDER) {
             setPayload(CryptoPayload.FILE)
         }
@@ -491,6 +494,93 @@ class CryptoViewModel @Inject constructor(
                 val sig = _uiState.value.signatureFileBytes ?: error("Pick the .sig signature file")
                 val result = verifyIncrementally(sig, message = data, binaryDocument = true)
                 applyVerifyResult(result)
+            } catch (e: Exception) {
+                _uiState.value = _uiState.value.copy(error = e.message)
+            } finally {
+                _uiState.value = _uiState.value.copy(isBusy = false)
+            }
+        }
+    }
+
+    /**
+     * Signs the challenge text with the AUTHENTICATION subkey (GnuPG-style identity proof).
+     */
+    fun authenticate() {
+        viewModelScope.launch {
+            var passphrase: CharArray? = null
+            _uiState.value = _uiState.value.copy(isBusy = true, error = null, verifyResult = null)
+            try {
+                val keyId = _uiState.value.secretKeyId ?: error("Select your secret key")
+                val key = keys.value.find { it.masterKeyId == keyId } ?: error("Key not found")
+                if (!key.isSecret) error("Select a secret key to authenticate")
+                val armored = withContext(Dispatchers.IO) {
+                    keyRepository.getArmoredSecret(keyId) ?: error("Secret missing")
+                }
+                passphrase = requirePassphrase()
+                val result = withContext(Dispatchers.Default) {
+                    cryptoOperations.authenticate(
+                        _uiState.value.plaintext.toByteArray(Charsets.UTF_8),
+                        armored,
+                        passphrase,
+                    )
+                }
+                _uiState.value = _uiState.value.copy(
+                    output = String(result.signatureArmored, Charsets.UTF_8),
+                    signedInput = String(result.signatureArmored, Charsets.UTF_8),
+                    error = null,
+                    passphrase = "",
+                    fileStatus = "Auth signature by ${formatKeyId(result.keyId)}",
+                )
+            } catch (e: Exception) {
+                _uiState.value = _uiState.value.copy(error = e.message)
+            } finally {
+                passphrase?.fill('\u0000')
+                _uiState.value = _uiState.value.copy(isBusy = false)
+            }
+        }
+    }
+
+    /** Verifies an authentication signature over the challenge using selected public keys. */
+    fun verifyAuthentication() {
+        viewModelScope.launch {
+            _uiState.value = _uiState.value.copy(isBusy = true, error = null, verifyResult = null)
+            try {
+                val challenge = _uiState.value.plaintext.toByteArray(Charsets.UTF_8)
+                require(challenge.isNotEmpty()) { "Enter the challenge to verify" }
+                val signature = _uiState.value.signedInput.toByteArray(Charsets.UTF_8)
+                require(signature.isNotEmpty()) { "Paste the authentication signature" }
+                val ids = _uiState.value.recipientKeyIds.ifEmpty {
+                    keys.value.map { it.masterKeyId }.toSet()
+                }
+                var matched: VerifyUiResult? = null
+                for (id in ids) {
+                    val public = withContext(Dispatchers.IO) {
+                        keyRepository.getArmoredPublic(id)
+                    } ?: continue
+                    val result = withContext(Dispatchers.Default) {
+                        cryptoOperations.verifyAuthentication(challenge, signature, public)
+                    }
+                    if (result.valid) {
+                        val label = keys.value.find { it.masterKeyId == id }?.primaryUserId
+                            ?: result.signerKeyId?.let { formatKeyId(it) }
+                        matched = VerifyUiResult(
+                            valid = true,
+                            signerKeyId = result.signerKeyId,
+                            signerLabel = label,
+                            error = null,
+                        )
+                        break
+                    }
+                }
+                _uiState.value = _uiState.value.copy(
+                    verifyResult = matched ?: VerifyUiResult(
+                        valid = false,
+                        signerKeyId = null,
+                        signerLabel = null,
+                        error = "Authentication signature invalid",
+                    ),
+                    error = null,
+                )
             } catch (e: Exception) {
                 _uiState.value = _uiState.value.copy(error = e.message)
             } finally {

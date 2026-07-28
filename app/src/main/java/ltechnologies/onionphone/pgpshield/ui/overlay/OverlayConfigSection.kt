@@ -206,7 +206,10 @@ fun OverlayConfigSection(
                 }
             }
         }
-        if (encoding == EncodingMethod.GPG || encoding == EncodingMethod.SYMMETRIC) {
+        if (encoding == EncodingMethod.GPG ||
+            encoding == EncodingMethod.SYMMETRIC ||
+            encoding == EncodingMethod.ZERO_WIDTH
+        ) {
             KeyMultiSelectField(
                 label = stringResource(R.string.overlay_encrypt_with_recipient),
                 keys = keys,

@@ -49,13 +49,23 @@ jobs:
         run: ./gradlew test --stacktrace --no-daemon
 
       - name: Assemble debug APK (arm64-v8a)
-        run: ./gradlew :app:assembleDebug -Ponionphone.devAbi=arm64-v8a --stacktrace --no-daemon
+        run: |
+          ./gradlew :app:assembleDebug -Ponionphone.devAbi=arm64-v8a --stacktrace --no-daemon
+          mkdir -p artifacts
+          cp app/build/outputs/apk/debug/*-debug.apk artifacts/app-debug-arm64-v8a.apk
 
-      - name: Upload debug APK artifact
+      # Waydroid / emulator hosts need x86_64; keep arm64 for physical devices.
+      - name: Assemble debug APK (x86_64)
+        run: |
+          ./gradlew :app:assembleDebug -Ponionphone.devAbi=x86_64 --stacktrace --no-daemon
+          mkdir -p artifacts
+          cp app/build/outputs/apk/debug/*-debug.apk artifacts/app-debug-x86_64.apk
+
+      - name: Upload debug APK artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: app-debug-arm64-v8a
-          path: app/build/outputs/apk/debug/*-debug.apk
+          name: app-debug-apks
+          path: artifacts/*.apk
           if-no-files-found: error
           retention-days: 14
 

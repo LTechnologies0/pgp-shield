@@ -96,6 +96,21 @@ object ZeroWidthEncoder {
         }
     }
 
+    /**
+     * Returns `true` when [text] carries a PGP Shield zero-width payload (magic)
+     * or any mapped invisible code points (Oversec-style decoy + hidden bytes).
+     */
+    fun containsPayload(text: String): Boolean {
+        if (text.indexOf(MAGIC_ZW) >= 0) return true
+        var i = 0
+        while (i < text.length) {
+            val cp = text.codePointAt(i)
+            if (REVERSE_MAPPING.containsKey(cp)) return true
+            i = text.offsetByCodePoints(i, 1)
+        }
+        return false
+    }
+
     private fun encodeBytes(data: ByteArray, spread: Int): String {
         val sb = StringBuilder()
         var sinceVisible = 0

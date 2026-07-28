@@ -5,6 +5,7 @@ package ltechnologies.onionphone.pgpshield.overlay
  */
 
 import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.CopyOnWriteArrayList
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -13,15 +14,27 @@ import javax.inject.Singleton
  * overlay can decrypt repeatedly without re-prompting, while limiting exposure.
  *
  * Entries expire after a fixed TTL and the oldest is evicted past the capacity
- * limit. All stored buffers are zeroed on removal.
+ * limit. All stored buffers are zeroed on removal. [addUnlockListener] notifies
+ * when a key is unlocked so in-place decrypt can resume immediately.
  */
 @Singleton
 class OverlayPassphraseSession @Inject constructor() {
     private data class Entry(val passphrase: CharArray, val expiresAtMs: Long)
 
     private val entries = ConcurrentHashMap<Long, Entry>()
-    private val ttlMs: Long = 2 * 60 * 1000L
+    private val unlockListeners = CopyOnWriteArrayList<(Long) -> Unit>()
+    private val ttlMs: Long = 5 * 60 * 1000L
     private val maxEntries = 3
+
+    /** Registers a listener invoked on the calling thread after a successful [put]. */
+    fun addUnlockListener(listener: (Long) -> Unit) {
+        unlockListeners.addIfAbsent(listener)
+    }
+
+    /** Removes a previously registered unlock listener. */
+    fun removeUnlockListener(listener: (Long) -> Unit) {
+        unlockListeners.remove(listener)
+    }
 
     /**
      * Returns a defensive copy of the cached passphrase for [keyId], or `null`
@@ -37,11 +50,17 @@ class OverlayPassphraseSession @Inject constructor() {
         return entry.passphrase.copyOf()
     }
 
-    /** Stores a copy of [passphrase] for [keyId] with a fresh TTL, then trims. */
+    /** Returns `true` when a non-expired passphrase is cached for [keyId]. */
+    fun isUnlocked(keyId: Long): Boolean = get(keyId)?.also { it.fill('\u0000') } != null
+
+    /** Stores a copy of [passphrase] for [keyId] with a fresh TTL, then notifies listeners. */
     fun put(keyId: Long, passphrase: CharArray) {
         clear(keyId)
         entries[keyId] = Entry(passphrase.copyOf(), System.currentTimeMillis() + ttlMs)
         trimToCapacity()
+        unlockListeners.forEach { listener ->
+            runCatching { listener(keyId) }
+        }
     }
 
     private fun trimToCapacity() {

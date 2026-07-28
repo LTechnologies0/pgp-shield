@@ -2,34 +2,27 @@ package ltechnologies.onionphone.pgpshield.overlay
 
 /**
  * Standalone activity that prompts for a key passphrase on behalf of the overlay.
+ *
+ * Uses a classic [android.widget.EditText] (not Compose TextField) so IME input,
+ * autofill, and accessibility SET_TEXT all update the value reliably.
  */
 
 import android.app.Activity
 import android.content.Intent
 import android.os.Bundle
+import android.text.InputType
+import android.view.Gravity
+import android.view.View
+import android.widget.Button
+import android.widget.EditText
+import android.widget.LinearLayout
+import android.widget.TextView
 import androidx.activity.ComponentActivity
-import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
-import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.padding
-import androidx.compose.material3.Button
-import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.Text
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
-import androidx.compose.ui.Modifier
-import androidx.compose.ui.res.stringResource
-import androidx.compose.ui.text.input.PasswordVisualTransformation
-import androidx.compose.ui.unit.dp
+import androidx.core.view.setPadding
 import dagger.hilt.android.AndroidEntryPoint
 import ltechnologies.onionphone.pgpshield.R
 import ltechnologies.onionphone.pgpshield.data.SettingsRepository
-import ltechnologies.onionphone.pgpshield.ui.components.IntentFlowScaffold
-import ltechnologies.onionphone.pgpshield.ui.theme.PgpShieldTheme
 import ltechnologies.onionphone.pgpshield.util.WindowSecureHelper
 import javax.inject.Inject
 
@@ -54,54 +47,69 @@ class OverlayPassphrasePromptActivity : ComponentActivity() {
             finish()
             return
         }
-        enableEdgeToEdge()
-        setContent {
-            PgpShieldTheme {
-                var passphrase by remember { mutableStateOf("") }
-                IntentFlowScaffold(
-                    title = stringResource(R.string.overlay_passphrase_title),
-                    onBack = { finish() },
-                ) { padding ->
-                    Column(
-                        modifier = Modifier
-                            .fillMaxSize()
-                            .padding(padding)
-                            .padding(horizontal = 16.dp),
-                    ) {
-                        OutlinedTextField(
-                            value = passphrase,
-                            onValueChange = { passphrase = it },
-                            label = { Text(stringResource(R.string.crypto_key_passphrase)) },
-                            visualTransformation = PasswordVisualTransformation(),
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(top = 12.dp),
-                        )
-                        Button(
-                            onClick = {
-                                val chars = passphrase.toCharArray()
-                                passphrase = ""
-                                session.put(keyId, chars)
-                                chars.fill('\u0000')
-                                setResult(Activity.RESULT_OK, Intent().putExtra(EXTRA_KEY_ID, keyId))
-                                finish()
-                            },
-                            enabled = passphrase.isNotBlank(),
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(top = 12.dp),
-                        ) {
-                            Text(stringResource(R.string.overlay_unlock))
-                        }
-                    }
-                }
-            }
+        // Automation / instrumentation can unlock without IME quirks.
+        intent.getStringExtra(EXTRA_PASSPHRASE)?.takeIf { it.isNotBlank() }?.let { prefill ->
+            session.put(keyId, prefill.toCharArray())
+            setResult(Activity.RESULT_OK, Intent().putExtra(EXTRA_KEY_ID, keyId))
+            finish()
+            return
         }
+        enableEdgeToEdge()
+
+        val density = resources.displayMetrics.density
+        val pad = (16 * density).toInt()
+        val root = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(pad)
+            gravity = Gravity.TOP
+        }
+        root.addView(
+            TextView(this).apply {
+                text = getString(R.string.overlay_passphrase_title)
+                textSize = 20f
+                setPadding(0, 0, 0, pad)
+            },
+        )
+        val field = EditText(this).apply {
+            hint = getString(R.string.crypto_key_passphrase)
+            inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_PASSWORD
+            importantForAutofill = View.IMPORTANT_FOR_AUTOFILL_YES
+        }
+        root.addView(
+            field,
+            LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT,
+            ),
+        )
+        root.addView(
+            Button(this).apply {
+                text = getString(R.string.overlay_unlock)
+                setOnClickListener {
+                    val chars = field.text?.toString()?.toCharArray() ?: return@setOnClickListener
+                    if (chars.isEmpty()) return@setOnClickListener
+                    field.text?.clear()
+                    session.put(keyId, chars)
+                    chars.fill('\u0000')
+                    setResult(Activity.RESULT_OK, Intent().putExtra(EXTRA_KEY_ID, keyId))
+                    finish()
+                }
+            },
+            LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT,
+            ).also { it.topMargin = pad },
+        )
+        setContentView(root)
+        field.requestFocus()
     }
 
     /** Intent extras for launching the prompt. */
     companion object {
         /** Long extra carrying the master key id whose passphrase is requested. */
         const val EXTRA_KEY_ID = "overlay_key_id"
+
+        /** Optional passphrase for automated unlock (ADB / instrumentation). */
+        const val EXTRA_PASSPHRASE = "overlay_passphrase"
     }
 }
