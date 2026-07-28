@@ -10,6 +10,9 @@ class FakeKeyserver(
     private val lookupBody: ByteArray,
 ) : AutoCloseable {
     private val server: HttpServer = HttpServer.create(InetSocketAddress(0), 0)
+    private val executor = java.util.concurrent.Executors.newCachedThreadPool { r ->
+        Thread(r, "fake-keyserver").apply { isDaemon = true }
+    }
     var uploadedKey: ByteArray? = null
         private set
     val baseUrl: String
@@ -34,6 +37,8 @@ class FakeKeyserver(
                 .put("token", "test-token")
             respondJson(exchange, response.toString())
         }
+        // Daemon executor so leftover server threads cannot keep the JVM / Gradle alive.
+        server.executor = executor
         server.start()
     }
 
@@ -64,5 +69,6 @@ class FakeKeyserver(
 
     override fun close() {
         server.stop(0)
+        executor.shutdownNow()
     }
 }
