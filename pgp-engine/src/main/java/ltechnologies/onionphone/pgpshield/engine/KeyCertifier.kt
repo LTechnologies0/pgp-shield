@@ -71,7 +71,7 @@ class KeyCertifier {
         }.generate()
 
         val sigGen = PGPSignatureGenerator(
-            PgpOperators.contentSignerBuilder(certifierPublic.algorithm, useBc),
+            PgpOperators.contentSignerBuilder(certifierPublic, useBc),
         )
         sigGen.setHashedSubpackets(hashed)
         sigGen.init(request.certificationType.toSignatureType(), certifierPrivate)

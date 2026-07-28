@@ -47,6 +47,22 @@ object PgpOperators {
             JcaPGPContentSignerBuilder(algorithm, hashAlgorithm)
         }
 
+    /**
+     * Returns a content signer builder using a hash compatible with [publicKey].
+     *
+     * Prefer this over the algorithm-tag overload so ECDSA P-384/P-521 (and large
+     * DSA) keys are not certified with an undersized digest that GnuPG rejects.
+     */
+    fun contentSignerBuilder(
+        publicKey: PGPPublicKey,
+        useBcLightweight: Boolean,
+    ): PGPContentSignerBuilder =
+        contentSignerBuilder(
+            publicKey.algorithm,
+            useBcLightweight,
+            PgpAlgorithmPolicy.signatureHashForPublicKey(publicKey),
+        )
+
     /** Returns a signature verifier provider matching the key material backend. */
     fun contentVerifierProvider(useBcLightweight: Boolean): PGPContentVerifierBuilderProvider =
         if (useBcLightweight) {

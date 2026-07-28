@@ -11,6 +11,7 @@ import ltechnologies.onionphone.pgpshield.engine.model.KeyRingInfo
 import org.bouncycastle.bcpg.HashAlgorithmTags
 import org.bouncycastle.bcpg.PublicKeyAlgorithmTags
 import org.bouncycastle.bcpg.SymmetricKeyAlgorithmTags
+import org.bouncycastle.openpgp.PGPPublicKey
 
 /** Allowed algorithms, defaults, and key-ring validation for OpenPGP operations. */
 object PgpAlgorithmPolicy {
@@ -50,6 +51,28 @@ object PgpAlgorithmPolicy {
     val defaultHashAlgorithm: Int = HashAlgorithmTags.SHA256
     /** Minimum RSA modulus size accepted for generation and validation. */
     const val minRsaBits: Int = 2048
+
+    /**
+     * Selects the OpenPGP signature hash for [key].
+     *
+     * GnuPG, Kleopatra, and OpenKeychain reject ECDSA/DSA signatures whose digest
+     * is shorter than the curve/group order (e.g. NIST P-521 with SHA-256 yields
+     * "requires a 512 bit or larger hash" and the key is skipped on import).
+     */
+    fun signatureHashForPublicKey(key: PGPPublicKey): Int {
+        val algorithm = key.algorithm
+        val needsStrengthMatch =
+            algorithm == PublicKeyAlgorithmTags.ECDSA ||
+                algorithm == PublicKeyAlgorithmTags.EC ||
+                algorithm == PublicKeyAlgorithmTags.DSA
+        if (!needsStrengthMatch) return defaultHashAlgorithm
+        val bits = key.bitStrength
+        return when {
+            bits >= 512 -> HashAlgorithmTags.SHA512
+            bits >= 384 -> HashAlgorithmTags.SHA384
+            else -> HashAlgorithmTags.SHA256
+        }
+    }
     /** RSA key sizes permitted for new key generation. */
     val allowedRsaBits: Set<Int> = setOf(2048, 3072, 4096)
     /** Default DSA primary key size for legacy DSA/ElGamal rings. */

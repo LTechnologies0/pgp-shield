@@ -12,7 +12,11 @@ import org.bouncycastle.bcpg.SymmetricKeyAlgorithmTags
  * [PgpSecurityConstants](https://github.com/open-keychain/open-keychain).
  */
 object PgpSecurityConstants {
-    /** Hash algorithm for subkey-binding and primary-key-binding signatures. */
+    /**
+     * Fallback hash for subkey-binding signatures when curve-aware selection is
+     * unavailable. Prefer [PgpAlgorithmPolicy.signatureHashForPublicKey] so
+     * ECDSA P-384/P-521 bindings remain importable by GnuPG/Kleopatra.
+     */
     const val SECRET_KEY_BINDING_SIGNATURE_HASH_ALGO = HashAlgorithmTags.SHA256
 
     /** Hash algorithm for the SHA-1 checksum appended to secret key packets. */

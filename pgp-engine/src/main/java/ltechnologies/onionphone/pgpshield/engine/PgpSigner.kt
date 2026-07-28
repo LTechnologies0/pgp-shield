@@ -10,7 +10,6 @@ package ltechnologies.onionphone.pgpshield.engine
 import java.io.ByteArrayInputStream
 import java.io.ByteArrayOutputStream
 import org.bouncycastle.bcpg.ArmoredOutputStream
-import org.bouncycastle.bcpg.HashAlgorithmTags
 import org.bouncycastle.openpgp.PGPSecretKey
 import org.bouncycastle.openpgp.PGPSecretKeyRing
 import org.bouncycastle.openpgp.PGPSignatureGenerator
@@ -59,9 +58,10 @@ class PgpSigner {
         val signingKey = findSigningSecretKey(secretRing)
         val useBc = PgpOperators.useBcForPublicKey(signingKey.publicKey)
         val privateKey = PgpOperators.extractPrivateKey(signingKey, request.passphrase)
+        val hashAlgorithm = PgpAlgorithmPolicy.signatureHashForPublicKey(signingKey.publicKey)
 
         val sigGen = PGPSignatureGenerator(
-            PgpOperators.contentSignerBuilder(signingKey.publicKey.algorithm, useBc),
+            PgpOperators.contentSignerBuilder(signingKey.publicKey, useBc),
         )
         if (request.detachedBinary) {
             sigGen.init(org.bouncycastle.openpgp.PGPSignature.BINARY_DOCUMENT, privateKey)
@@ -82,7 +82,7 @@ class PgpSigner {
 
         val armored = ByteArrayOutputStream().use { out ->
             ArmoredOutputStream(out).use { armor ->
-                armor.beginClearText(HashAlgorithmTags.SHA256)
+                armor.beginClearText(hashAlgorithm)
                 armor.write(canonical)
                 armor.endClearText()
                 signature.encode(armor)
