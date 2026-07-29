@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 1.0.1
 
 - Fix ECDSA P-384/P-521 public-key export interoperability with GnuPG, Kleopatra, and OpenKeychain by signing certifications with SHA-384/SHA-512 (SHA-256 is rejected for those curves). Existing P-384/P-521 keys must be regenerated to become importable.
 - Cleartext signatures now hash CRLF-canonicalized text (RFC 4880), so `gpg --verify` / Kleopatra accept them.
