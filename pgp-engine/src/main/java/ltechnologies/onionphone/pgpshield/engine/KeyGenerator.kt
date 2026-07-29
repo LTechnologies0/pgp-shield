@@ -87,11 +87,12 @@ class KeyGenerator {
     ): GeneratedKeyRing {
         val digestCalc = JcaPlatform.digestCalculators.get(HashAlgorithmTags.SHA1)
         val contentSignerBuilder: PGPContentSignerBuilder =
-            PgpOperators.contentSignerBuilder(masterPair.publicKey.algorithm, useBcLightweight)
+            PgpOperators.contentSignerBuilder(masterPair.publicKey, useBcLightweight)
         val encryptor = PgpOperators.secretKeyEncryptor(request.passphrase, useBcLightweight)
 
         val hashedSubpackets = PGPSignatureSubpacketGenerator().apply {
             setKeyFlags(false, KeyFlags.CERTIFY_OTHER or KeyFlags.SIGN_DATA)
+            PgpAlgorithmPolicy.applyInteropPreferences(this, masterPair.publicKey)
         }.generate()
         val unhashedSubpackets = PGPSignatureSubpacketGenerator().apply {
             addSignerUserID(false, request.userId)

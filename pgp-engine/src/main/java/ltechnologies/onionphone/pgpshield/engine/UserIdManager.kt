@@ -73,7 +73,7 @@ class UserIdManager {
                 setSignatureCreationTime(true, now)
             }.generate()
             val sigGen = PGPSignatureGenerator(
-                PgpOperators.contentSignerBuilder(publicKey.algorithm, useBc),
+                PgpOperators.contentSignerBuilder(publicKey, useBc),
             )
             sigGen.setHashedSubpackets(hashed)
             sigGen.init(PGPSignature.CERTIFICATION_REVOCATION, privateKey)
@@ -132,9 +132,10 @@ class UserIdManager {
             setSignatureCreationTime(true, now)
             setKeyFlags(true, flags)
             setPrimaryUserID(false, primary)
+            PgpAlgorithmPolicy.applyInteropPreferences(this, publicKey)
         }.generate()
         val sigGen = PGPSignatureGenerator(
-            PgpOperators.contentSignerBuilder(publicKey.algorithm, useBc),
+            PgpOperators.contentSignerBuilder(publicKey, useBc),
         )
         sigGen.setHashedSubpackets(hashed)
         sigGen.init(PGPSignature.POSITIVE_CERTIFICATION, privateKey)

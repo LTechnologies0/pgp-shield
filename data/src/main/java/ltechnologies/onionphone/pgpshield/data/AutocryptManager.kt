@@ -68,15 +68,16 @@ class AutocryptManager @Inject constructor(
         }
         val email = params["addr"]?.takeIf { it.isNotBlank() } ?: return
         val keydata = params["keydata"]?.takeIf { it.isNotBlank() } ?: return
-        val armored = if (keydata.contains("BEGIN PGP")) {
-            keydata.toByteArray(Charsets.UTF_8)
-        } else {
-            // ponytail: base64 armored key in header without BEGIN line
-            "-----BEGIN PGP PUBLIC KEY BLOCK-----\n$keydata\n-----END PGP PUBLIC KEY BLOCK-----"
-                .toByteArray(Charsets.UTF_8)
-        }
         runCatching {
-            val info = reader.readPublicKeyRing(armored.inputStream())
+            val info = if (keydata.contains("BEGIN PGP")) {
+                reader.readPublicKeyRing(keydata.toByteArray(Charsets.UTF_8).inputStream())
+            } else {
+                // Autocrypt keydata is base64 of the binary transferable public key.
+                // Prefer binary parse over hand-rolled armor (armor needs a blank
+                // line after headers; omitting it breaks Bouncy Castle / GnuPG).
+                val binary = java.util.Base64.getDecoder().decode(keydata.replace(Regex("\\s+"), ""))
+                reader.readPublicKeyRing(binary.inputStream())
+            }
             prefs.edit().putLong(emailKey(email), info.masterKeyId).apply()
         }
     }

@@ -33,6 +33,7 @@ import ltechnologies.onionphone.pgpshield.data.SettingsRepository
 import ltechnologies.onionphone.pgpshield.engine.PgpIo
 import ltechnologies.onionphone.pgpshield.ui.components.IntentFlowScaffold
 import ltechnologies.onionphone.pgpshield.ui.theme.PgpShieldTheme
+import ltechnologies.onionphone.pgpshield.util.ArmoredKeyDetector
 import ltechnologies.onionphone.pgpshield.util.WindowSecureHelper
 import javax.inject.Inject
 import kotlinx.coroutines.Dispatchers
@@ -132,7 +133,8 @@ class ImportKeyActivity : ComponentActivity() {
 
     private fun looksLikeSecret(armored: ByteArray): Boolean {
         val text = String(armored, Charsets.UTF_8)
-        return text.contains("PRIVATE KEY BLOCK", ignoreCase = true)
+        // GnuPG exports "SECRET KEY BLOCK"; OpenKeychain/BC often use "PRIVATE KEY BLOCK".
+        return ArmoredKeyDetector.isSecretBlock(text) == true
     }
 
     /** Intent extras for launching the import screen. */

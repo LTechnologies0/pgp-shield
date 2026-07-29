@@ -135,14 +135,14 @@ class SubkeyAdder {
         subUseBc: Boolean,
     ): PGPPublicKey {
         val masterSigGen = PGPSignatureGenerator(
-            bindingSignerBuilder(masterPublic.algorithm, masterUseBc),
+            bindingSignerBuilder(masterPublic, masterUseBc),
         )
         val unhashedGen = PGPSignatureSubpacketGenerator()
 
         // OpenKeychain: primary-key binding only when SIGN_DATA (not AUTH-only subkeys).
         if (flags and KeyFlags.SIGN_DATA != 0) {
             val subSigGen = PGPSignatureGenerator(
-                bindingSignerBuilder(subPair.publicKey.algorithm, subUseBc),
+                bindingSignerBuilder(subPair.publicKey, subUseBc),
             )
             val subHashed = PGPSignatureSubpacketGenerator().apply {
                 setSignatureCreationTime(false, creationTime)
@@ -171,11 +171,12 @@ class SubkeyAdder {
         return PGPPublicKey.addCertification(subPair.publicKey, cert)
     }
 
-    /** Builds a content signer for subkey-binding signatures using the configured hash algorithm. */
-    private fun bindingSignerBuilder(algorithm: Int, useBcLightweight: Boolean) =
-        PgpOperators.contentSignerBuilder(
-            algorithm,
-            useBcLightweight,
-            PgpSecurityConstants.SECRET_KEY_BINDING_SIGNATURE_HASH_ALGO,
-        )
+    /**
+     * Builds a content signer for subkey-binding signatures.
+     *
+     * Hash is chosen from the master key so P-384/P-521 bindings stay importable
+     * by GnuPG/Kleopatra (SHA-256 alone is rejected for those curves).
+     */
+    private fun bindingSignerBuilder(masterPublic: PGPPublicKey, useBcLightweight: Boolean) =
+        PgpOperators.contentSignerBuilder(masterPublic, useBcLightweight)
 }

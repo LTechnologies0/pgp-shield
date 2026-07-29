@@ -87,19 +87,22 @@ class PgpVerifier {
                 while (armIn.read().also { ch = it } >= 0 && armIn.isClearText) {
                     plainOut.write(ch)
                 }
-                val canonical = plainOut.toByteArray()
+                val cleartext = plainOut.toByteArray()
+                // Re-canonicalize: armor may arrive with LF-only lines after paste/transit,
+                // but the signature was computed over the RFC 4880 CRLF form.
+                val hashed = PgpCleartext.canonicalize(cleartext)
                 val sigList = PGPObjectFactory(armIn, fingerprintCalculator).nextObject() as PGPSignatureList
                 val sig = sigList[0]
                 val key = findPublicKey(sig.keyID, publicRings) ?: return VerifyResult(
                     valid = false,
                     signerKeyId = sig.keyID,
-                    message = canonical,
+                    message = cleartext,
                     error = "Signer key 0x${sig.keyID.toString(16)} not in keyring",
                 )
-                if (!verifySignature(sig, key, canonical)) {
+                if (!verifySignature(sig, key, hashed)) {
                     return VerifyResult(valid = false, signerKeyId = sig.keyID, error = "Invalid signature")
                 }
-                VerifyResult(valid = true, signerKeyId = sig.keyID, message = canonical)
+                VerifyResult(valid = true, signerKeyId = sig.keyID, message = cleartext)
             }
         } catch (e: Exception) {
             VerifyResult(valid = false, error = e.message)
@@ -122,7 +125,7 @@ class PgpVerifier {
             val data = if (binaryDocument) {
                 message
             } else {
-                canonicalize(message.toString(Charsets.UTF_8))
+                PgpCleartext.canonicalize(message)
             }
             if (!verifySignature(sig, key, data)) {
                 return VerifyResult(valid = false, signerKeyId = sig.keyID, error = "Invalid detached signature")
@@ -164,12 +167,5 @@ class PgpVerifier {
         } catch (_: Exception) {
             null
         }
-    }
-
-    /** Canonicalizes text per OpenPGP cleartext signature rules (CRLF, trailing spaces). */
-    private fun canonicalize(text: String): ByteArray {
-        var normalized = text.replace("\r\n", "\n").replace("\r", "\n")
-        normalized = normalized.lines().joinToString("\n") { it.trimEnd() } + "\n"
-        return normalized.toByteArray(Charsets.UTF_8)
     }
 }

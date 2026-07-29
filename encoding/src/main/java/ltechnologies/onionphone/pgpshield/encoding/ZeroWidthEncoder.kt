@@ -87,13 +87,24 @@ object ZeroWidthEncoder {
         return try {
             while (off < s.length) {
                 val cp = s.codePointAt(off)
-                if (!REVERSE_MAPPING.containsKey(cp)) break
+                if (!REVERSE_MAPPING.containsKey(cp) && cp != '\u200B'.code) break
                 off = s.offsetByCodePoints(off, 1)
             }
             s.substring(off)
         } catch (_: IndexOutOfBoundsException) {
             ""
         }
+    }
+
+    /**
+     * Visible cover text preceding a `PSH` zero-width frame, or the full string if none.
+     *
+     * Encoded form is `cover + ZW(frame)`. Using this (not [stripInvisible]) prevents
+     * nesting frames when the overlay re-encrypts an already-encoded field.
+     */
+    fun visibleCover(s: String): String {
+        val start = s.indexOf(MAGIC_ZW)
+        return if (start < 0) s else s.substring(0, start)
     }
 
     private fun encodeBytes(data: ByteArray, spread: Int): String {
@@ -118,7 +129,8 @@ object ZeroWidthEncoder {
             val cp = encoded.codePointAt(i)
             i = encoded.offsetByCodePoints(i, 1)
             if (cp == '\u200B'.code) continue
-            val value = REVERSE_MAPPING[cp] ?: return null
+            // Stop on trailing messenger junk instead of failing the whole decode.
+            val value = REVERSE_MAPPING[cp] ?: break
             out.add(value.toByte())
         }
         return out.toByteArray()

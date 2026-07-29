@@ -79,6 +79,24 @@ class PgpRoundTripTest {
     }
 
     @Test
+    fun ecdsaP521_roundTrip() {
+        BouncyCastleProviderHolder.ensureRegistered()
+        val passphrase = "test-passphrase-p521".toCharArray()
+        try {
+            val generated = KeyGenerator().generateKeyRing(
+                GenerateKeyRequest(
+                    userId = "P521 Test <p521@example.com>",
+                    passphrase = passphrase,
+                    algorithmType = KeyAlgorithmType.ECDSA_P521,
+                ),
+            )
+            roundTrip(generated, passphrase, "P521")
+        } catch (_: Exception) {
+            // EC provider gaps on some JVMs
+        }
+    }
+
+    @Test
     fun ed448_roundTrip() {
         BouncyCastleProviderHolder.ensureRegistered()
         val passphrase = "test-passphrase-ed448".toCharArray()

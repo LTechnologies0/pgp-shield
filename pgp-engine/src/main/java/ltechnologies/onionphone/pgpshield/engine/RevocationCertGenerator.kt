@@ -63,7 +63,7 @@ class RevocationCertGenerator {
         }.generate()
 
         val sigGen = PGPSignatureGenerator(
-            PgpOperators.contentSignerBuilder(masterPublic.algorithm, useBc),
+            PgpOperators.contentSignerBuilder(masterPublic, useBc),
         )
         sigGen.setHashedSubpackets(hashed)
         sigGen.init(PGPSignature.KEY_REVOCATION, privateKey)

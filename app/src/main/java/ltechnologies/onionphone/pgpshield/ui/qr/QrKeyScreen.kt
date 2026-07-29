@@ -180,8 +180,14 @@ fun QrKeyScreen(
                                 status = "Could not load public key"
                                 return@launch
                             }
-                            qrBitmap = withContext(Dispatchers.Default) { encodeQr(armored) }
-                            status = "QR generated"
+                            val bmp = withContext(Dispatchers.Default) { encodeQr(armored) }
+                            if (bmp == null) {
+                                qrBitmap = null
+                                status = "Public key is too large for a single QR code"
+                            } else {
+                                qrBitmap = bmp
+                                status = "QR generated"
+                            }
                         }
                     },
                     modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
@@ -207,19 +213,27 @@ fun QrKeyScreen(
     }
 }
 
-private fun encodeQr(text: String): Bitmap {
-    // ponytail: chunk if key exceeds QR capacity; upgrade path is multi-QR sequence
-    val payload = text.take(2000)
-    val matrix = QRCodeWriter().encode(payload, BarcodeFormat.QR_CODE, 512, 512)
-    val w = matrix.width
-    val h = matrix.height
-    val bmp = Bitmap.createBitmap(w, h, Bitmap.Config.RGB_565)
-    for (x in 0 until w) {
-        for (y in 0 until h) {
-            bmp.setPixel(x, y, if (matrix[x, y]) android.graphics.Color.BLACK else android.graphics.Color.WHITE)
+/**
+ * Encodes [text] as a QR bitmap, or `null` when the payload exceeds QR capacity.
+ *
+ * Never truncates armored keys — a silent `take(N)` produced unscannable blocks
+ * missing `END`/`CRC` that Kleopatra/OpenKeychain reject.
+ */
+private fun encodeQr(text: String): Bitmap? {
+    return try {
+        val matrix = QRCodeWriter().encode(text, BarcodeFormat.QR_CODE, 512, 512)
+        val w = matrix.width
+        val h = matrix.height
+        val bmp = Bitmap.createBitmap(w, h, Bitmap.Config.RGB_565)
+        for (x in 0 until w) {
+            for (y in 0 until h) {
+                bmp.setPixel(x, y, if (matrix[x, y]) android.graphics.Color.BLACK else android.graphics.Color.WHITE)
+            }
         }
+        bmp
+    } catch (_: Exception) {
+        null
     }
-    return bmp
 }
 
 private const val QR_DECODE_MAX_DIMENSION = 1024
