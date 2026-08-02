@@ -72,7 +72,7 @@ class ExportedKeyProvider : ContentProvider() {
         val columns = projection ?: DEFAULT_PROJECTION
         val cursor = MatrixCursor(columns)
         for (row in rows) {
-            val values = Array(columns.size) { index ->
+            val values = Array<Any?>(columns.size) { index ->
                 when (columns[index]) {
                     BaseColumns._ID -> row.masterKeyId
                     COLUMN_EMAIL_ADDRESS -> row.emailAddress

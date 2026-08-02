@@ -52,7 +52,11 @@ class EcdsaHashInteropTest {
                 gnupgHome.toString(),
                 "--import",
                 keyFile.toString(),
-            ).redirectErrorStream(true).start()
+            ).redirectErrorStream(true).apply {
+                // Keep assertion strings stable across host locales (e.g. fr_FR → "importées").
+                environment()["LC_ALL"] = "C"
+                environment()["LANG"] = "C"
+            }.start()
             val output = process.inputStream.readBytes().toString(StandardCharsets.UTF_8)
             val exit = process.waitFor()
             assertFalse(
@@ -69,7 +73,10 @@ class EcdsaHashInteropTest {
             )
             assertEquals(0, exit, "gpg --import failed: $output")
             assertTrue(
-                output.contains("imported") || output.contains("unchanged"),
+                output.contains("imported") ||
+                    output.contains("unchanged") ||
+                    output.contains("importées") ||
+                    output.contains("inchang"),
                 "Unexpected gpg import output: $output",
             )
         } finally {
