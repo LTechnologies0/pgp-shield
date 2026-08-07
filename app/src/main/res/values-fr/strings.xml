@@ -88,6 +88,7 @@
     <string name="overlay_padding_template">Modele de padding</string>
     <string name="settings_title">Parametres</string>
     <string name="settings_security">Securite</string>
+    <string name="settings_hardware_security">Protection materielle (StrongBox / MTE / Keystore)</string>
     <string name="settings_default_encrypt_key">Cle de chiffrement par defaut</string>
     <string name="settings_default_sign_key">Cle de signature par defaut</string>
     <string name="settings_keys">Cles</string>

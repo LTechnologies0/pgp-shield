@@ -108,7 +108,22 @@ fun SettingsScreen(
                         .fillMaxWidth()
                         .padding(bottom = 8.dp),
                 ) {
-                    Column(Modifier.padding(vertical = 8.dp)) {
+                    Column(modifier = Modifier.padding(vertical = 8.dp)) {
+                        val hw = remember(context) {
+                            ltechnologies.onionphone.pgpshield.data.security.HardwareSecurityCapabilities
+                                .report(context)
+                        }
+                        Text(
+                            text = stringResource(R.string.settings_hardware_security),
+                            style = MaterialTheme.typography.titleSmall,
+                            modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp),
+                        )
+                        Text(
+                            text = hw.summary,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp),
+                        )
                         KeySelectDropdown(
                             label = stringResource(R.string.settings_default_encrypt_key),
                             keys = state.keys,

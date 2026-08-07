@@ -4,93 +4,77 @@ import android.content.Context
 import androidx.security.crypto.EncryptedFile
 import androidx.security.crypto.MasterKey
 import dagger.hilt.android.qualifiers.ApplicationContext
-import ltechnologies.onionphone.pgpshield.engine.PgpIo
 import java.io.File
+import java.io.FileNotFoundException
 import javax.inject.Inject
 import javax.inject.Singleton
+import ltechnologies.onionphone.pgpshield.data.security.VaultAccessPolicy
+import ltechnologies.onionphone.pgpshield.data.security.VaultMasterKeyFactory
+import ltechnologies.onionphone.pgpshield.engine.PgpIo
+import timber.log.Timber
 
 /**
  * Encrypted on-disk storage for armored PGP key ring blobs.
  *
- * Uses AndroidX [EncryptedFile] with AES-256-GCM and a hardware-backed [MasterKey].
- * Secret and public key material are stored as separate files under the app's private
- * `keyrings` directory. Deletion overwrites the leading ciphertext bytes before unlinking
- * as a defense-in-depth measure alongside full-disk encryption.
+ * Uses AndroidX [EncryptedFile] with AES-256-GCM and a StrongBox-preferred [MasterKey]
+ * (TEE Keystore fallback). Legacy blobs encrypted with the default MasterKey alias are
+ * still readable and re-written under the v2 StrongBox key on next write.
  */
 @Singleton
 class EncryptedBlobStore @Inject constructor(
     @ApplicationContext private val context: Context,
+    private val vaultAccessPolicy: VaultAccessPolicy,
 ) : KeyBlobStore {
-    private val masterKey = MasterKey.Builder(context)
-        .setKeyScheme(MasterKey.KeyScheme.AES256_GCM)
-        .build()
+    private val masterKeyV2: MasterKey by lazy { VaultMasterKeyFactory.createVaultKey(context) }
+    private val masterKeyLegacy: MasterKey by lazy { VaultMasterKeyFactory.createLegacyVaultKey(context) }
 
     private val dir: File by lazy {
         File(context.filesDir, "keyrings").also { it.mkdirs() }
     }
 
-    /**
-     * Writes secret key ring bytes for [keyId], replacing any existing file at the target path.
-     *
-     * @param keyId Master key identifier used to derive the filename.
-     * @param data Armored secret key ring bytes.
-     * @return Absolute filesystem path of the written encrypted file.
-     */
     override fun write(keyId: Long, data: ByteArray): String = write(keyId, data, suffix = "")
 
-    /**
-     * Writes public key ring bytes for [keyId], stored separately from the secret blob.
-     *
-     * @param keyId Master key identifier used to derive the filename.
-     * @param data Armored public key ring bytes.
-     * @return Absolute filesystem path of the written encrypted file.
-     */
     override fun writePublic(keyId: Long, data: ByteArray): String = write(keyId, data, suffix = "_pub")
 
     private fun write(keyId: Long, data: ByteArray, suffix: String): String {
+        vaultAccessPolicy.assertSecretsAccessible()
         val path = fileFor(keyId, suffix)
         if (path.exists()) {
             delete(path.absolutePath)
         }
-        EncryptedFile.Builder(
-            context,
-            path,
-            masterKey,
-            EncryptedFile.FileEncryptionScheme.AES256_GCM_HKDF_4KB,
-        ).build().openFileOutput().use { it.write(data) }
+        openEncrypted(path, masterKeyV2).openFileOutput().use { it.write(data) }
         return path.absolutePath
     }
 
-    /**
-     * Reads and decrypts key ring bytes from [path].
-     *
-     * @param path Absolute path previously returned by [write] or [writePublic].
-     * @return Decrypted armored key ring bytes, size-limited via [PgpIo.readLimited].
-     * @throws java.io.FileNotFoundException if [path] does not refer to an existing file.
-     */
     override fun read(path: String): ByteArray {
+        vaultAccessPolicy.assertSecretsAccessible()
         val file = File(path)
         if (!file.isFile) {
-            throw java.io.FileNotFoundException("file doesn't exist: ${file.name}")
+            throw FileNotFoundException("file doesn't exist: ${file.name}")
         }
-        return EncryptedFile.Builder(
-            context,
-            file,
-            masterKey,
-            EncryptedFile.FileEncryptionScheme.AES256_GCM_HKDF_4KB,
-        ).build().openFileInput().use { PgpIo.readLimited(it) }
+        return try {
+            openEncrypted(file, masterKeyV2).openFileInput().use { PgpIo.readLimited(it) }
+        } catch (e: Exception) {
+            Timber.d(e, "v2 vault read failed — trying legacy MasterKey")
+            val plain = openEncrypted(file, masterKeyLegacy).openFileInput().use { PgpIo.readLimited(it) }
+            // Transparent upgrade to StrongBox-backed key on next successful read of secrets.
+            runCatching {
+                val tmp = File(file.parentFile, file.name + ".migrate")
+                if (tmp.exists()) tmp.delete()
+                openEncrypted(tmp, masterKeyV2).openFileOutput().use { it.write(plain) }
+                if (!tmp.renameTo(file)) {
+                    file.delete()
+                    tmp.renameTo(file)
+                }
+                Timber.i("Migrated vault blob %s to StrongBox/TEE MasterKey v2", file.name)
+            }.onFailure { Timber.w(it, "Vault migrate deferred for %s", file.name) }
+            plain
+        }
     }
 
-    /**
-     * Securely removes the encrypted file at [path].
-     *
-     * Overwrites up to the first 4 KiB of ciphertext before deletion. No-op if the file
-     * does not exist.
-     */
     override fun delete(path: String) {
         val file = File(path)
         if (!file.exists()) return
-        // ponytail: overwrite ciphertext header before unlink; FBE still primary defense
         runCatching {
             val len = file.length().coerceAtMost(4096L).toInt()
             if (len > 0) {
@@ -102,6 +86,14 @@ class EncryptedBlobStore @Inject constructor(
         }
         file.delete()
     }
+
+    private fun openEncrypted(file: File, masterKey: MasterKey): EncryptedFile =
+        EncryptedFile.Builder(
+            context,
+            file,
+            masterKey,
+            EncryptedFile.FileEncryptionScheme.AES256_GCM_HKDF_4KB,
+        ).build()
 
     private fun fileFor(keyId: Long, suffix: String = ""): File = File(dir, "kr_$keyId$suffix.gpg")
 }

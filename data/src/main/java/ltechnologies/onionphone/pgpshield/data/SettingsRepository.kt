@@ -1,6 +1,7 @@
 package ltechnologies.onionphone.pgpshield.data
 
 import android.content.Context
+import android.content.SharedPreferences
 import dagger.hilt.android.qualifiers.ApplicationContext
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -9,19 +10,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 
 /**
- * Snapshot of user-configurable application settings persisted in SharedPreferences.
- *
- * @property defaultEncryptKeyId Master key id used for encryption when none is explicitly chosen.
- * @property defaultSignKeyId Master key id used for signing when none is explicitly chosen.
- * @property keyserverLookupEnabled Whether remote keyserver lookup is enabled.
- * @property keyserverUrl Base URL for OpenPGP keyserver (VKS/HKP).
- * @property showFingerprintOnList Whether key fingerprints appear in the key list UI.
- * @property backupReminderEnabled Whether to remind the user to back up keys.
- * @property overlayGloballyEnabled Master switch for the messaging overlay feature.
- * @property showOverlayButtons Whether overlay action buttons are visible.
- * @property allowScreenshots Whether the app permits screen capture (FLAG_SECURE off).
- * @property autocryptEnabled Whether Autocrypt header processing is active.
- * @property appLanguage UI language code: `system`, `en`, `fr`, `es`, `de`, `it`, or `pt`.
+ * Snapshot of user-configurable application settings persisted in encrypted SharedPreferences.
  */
 data class AppSettings(
     val defaultEncryptKeyId: Long? = null,
@@ -39,25 +28,21 @@ data class AppSettings(
 )
 
 /**
- * Reactive repository for application settings backed by SharedPreferences.
+ * Reactive repository for application settings backed by StrongBox/TEE-encrypted prefs.
  *
- * Exposes a [StateFlow] of [AppSettings] and applies atomic read-modify-write updates.
- * Also tracks the timestamp of the last key export for backup reminders.
+ * Migrates once from the legacy cleartext `pgp_shield_settings` file.
  */
 @Singleton
 class SettingsRepository @Inject constructor(
     @ApplicationContext context: Context,
 ) {
-    private val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+    private val appContext = context.applicationContext
+    private val prefs: SharedPreferences = openPrefs(appContext)
     private val _settings = MutableStateFlow(read())
     val settings: StateFlow<AppSettings> = _settings.asStateFlow()
 
-    /** Returns the current settings snapshot without subscribing to updates. */
     fun current(): AppSettings = _settings.value
 
-    /**
-     * Atomically updates settings: applies [transform], persists to disk, and emits the new value.
-     */
     fun update(transform: (AppSettings) -> AppSettings) {
         val next = transform(_settings.value)
         prefs.edit()
@@ -95,20 +80,17 @@ class SettingsRepository @Inject constructor(
         )
     }
 
-    /** Records the current time as the last successful key export. */
     fun markKeyExported() {
         prefs.edit().putLong(KEY_LAST_EXPORT, System.currentTimeMillis()).apply()
     }
 
-    /** @return Epoch milliseconds of the last key export, or `0` if never exported. */
     fun lastExportMillis(): Long = prefs.getLong(KEY_LAST_EXPORT, 0L)
 
     companion object {
-        private const val PREFS_NAME = "pgp_shield_settings"
+        private const val PREFS_NAME = "pgp_shield_settings_enc"
+        private const val LEGACY_PREFS_NAME = "pgp_shield_settings"
         private const val KEY_DEFAULT_ENCRYPT = "default_encrypt_key"
         private const val KEY_DEFAULT_SIGN = "default_sign_key"
-        private const val KEY_CACHE_TTL = "passphrase_cache_ttl"
-        private const val KEY_WIPE_SCREEN_OFF = "wipe_cache_screen_off"
         private const val KEY_KEYSERVER = "keyserver_lookup"
         private const val KEY_KEYSERVER_URL = "keyserver_url"
         private const val KEY_SHOW_FP = "show_fingerprint_list"
@@ -119,21 +101,40 @@ class SettingsRepository @Inject constructor(
         private const val KEY_AUTOCRYPT = "autocrypt_enabled"
         private const val KEY_APP_LANGUAGE = "app_language"
         private const val KEY_LAST_EXPORT = "last_key_export"
+        private const val KEY_MIGRATED = "migrated_from_cleartext_v1"
+
+        private fun openPrefs(context: Context): SharedPreferences {
+            val enc = SecurePrefs.create(context, PREFS_NAME)
+            if (!enc.getBoolean(KEY_MIGRATED, false)) {
+                migrateFromCleartext(context, enc)
+            }
+            return enc
+        }
+
+        private fun migrateFromCleartext(context: Context, enc: SharedPreferences) {
+            val legacy = context.getSharedPreferences(LEGACY_PREFS_NAME, Context.MODE_PRIVATE)
+            val editor = enc.edit()
+            for ((key, value) in legacy.all) {
+                when (value) {
+                    is Boolean -> editor.putBoolean(key, value)
+                    is Int -> editor.putInt(key, value)
+                    is Long -> editor.putLong(key, value)
+                    is Float -> editor.putFloat(key, value)
+                    is String -> editor.putString(key, value)
+                    is Set<*> -> @Suppress("UNCHECKED_CAST")
+                    editor.putStringSet(key, value as Set<String>)
+                }
+            }
+            editor.putBoolean(KEY_MIGRATED, true).apply()
+            legacy.edit().clear().apply()
+        }
     }
 }
 
-/**
- * Size guard for armored key ring imports to prevent excessive memory use.
- */
+/** Size guard for armored key ring imports to prevent excessive memory use. */
 object ImportGuard {
-    /** Maximum permitted armored import size in bytes (2 MiB). */
     const val MAX_ARMORED_BYTES: Int = 2 * 1024 * 1024
 
-    /**
-     * Validates that [armored] does not exceed [MAX_ARMORED_BYTES].
-     *
-     * @throws IllegalArgumentException if the payload is too large.
-     */
     fun checkSize(armored: ByteArray) {
         require(armored.size <= MAX_ARMORED_BYTES) {
             "Import too large (max ${MAX_ARMORED_BYTES / 1024} KB)"

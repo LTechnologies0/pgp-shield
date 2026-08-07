@@ -2,41 +2,41 @@ package ltechnologies.onionphone.pgpshield.ui
 
 /**
  * The app's single main Activity hosting the Compose UI.
+ *
+ * Must be a [FragmentActivity]: [androidx.biometric.BiometricPrompt] requires it.
  */
 
 import android.os.Bundle
-import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.remember
 import androidx.core.view.WindowCompat
+import androidx.fragment.app.FragmentActivity
 import androidx.lifecycle.lifecycleScope
 import androidx.appcompat.app.AppCompatDelegate
 import androidx.core.os.LocaleListCompat
 import dagger.hilt.android.AndroidEntryPoint
 import ltechnologies.onionphone.pgpshield.data.SettingsRepository
+import ltechnologies.onionphone.pgpshield.ui.applock.AppLockGate
 import ltechnologies.onionphone.pgpshield.ui.components.LocalSnackbarHostState
 import ltechnologies.onionphone.pgpshield.ui.navigation.PgpShieldNavHost
 import ltechnologies.onionphone.pgpshield.ui.theme.PgpShieldTheme
 import ltechnologies.onionphone.pgpshield.util.WindowSecureHelper
+import ltechnologies.onionphone.pgpshield.security.AppLockAuthenticator
+import ltechnologies.onionphone.pgpshield.security.AppLockManager
 import javax.inject.Inject
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
 
-/**
- * Main entry Activity that renders [PgpShieldNavHost] inside [PgpShieldTheme].
- *
- * It applies the persisted app language, keeps it in sync with settings, sets up
- * edge-to-edge display, screenshot protection and a shared snackbar host.
- */
 @AndroidEntryPoint
-class MainActivity : ComponentActivity() {
+class MainActivity : FragmentActivity() {
     @Inject lateinit var settingsRepository: SettingsRepository
+    @Inject lateinit var appLockManager: AppLockManager
+    @Inject lateinit var appLockAuthenticator: AppLockAuthenticator
 
-    /** Applies locale/screenshot policy and installs the Compose content tree. */
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         applyLanguage(settingsRepository.current().appLanguage)
@@ -53,7 +53,12 @@ class MainActivity : ComponentActivity() {
             PgpShieldTheme {
                 val snackbarHostState = remember { SnackbarHostState() }
                 CompositionLocalProvider(LocalSnackbarHostState provides snackbarHostState) {
-                    PgpShieldNavHost()
+                    AppLockGate(
+                        appLockManager = appLockManager,
+                        authenticator = appLockAuthenticator,
+                    ) {
+                        PgpShieldNavHost()
+                    }
                 }
             }
         }

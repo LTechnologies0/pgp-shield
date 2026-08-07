@@ -22,6 +22,7 @@ import ltechnologies.onionphone.pgpshield.data.db.PaddingTemplateDao
 import ltechnologies.onionphone.pgpshield.data.db.PaddingTemplateEntity
 import ltechnologies.onionphone.pgpshield.engine.BouncyCastleProviderHolder
 import ltechnologies.onionphone.pgpshield.overlay.OverlayPassphraseSession
+import ltechnologies.onionphone.pgpshield.security.AppLockManager
 import ltechnologies.onionphone.pgpshield.util.LogRedactor
 import ltechnologies.onionphone.pgpshield.util.PrivacyLog
 import javax.inject.Inject
@@ -35,16 +36,6 @@ import timber.log.Timber
 /**
  * Root [Application] annotated with [HiltAndroidApp] to generate the Hilt
  * dependency container.
- *
- * Responsibilities performed on process start:
- * - Configures [Timber] logging (verbose in debug, redacted in release) and
- *   [android.os.StrictMode] policies during development.
- * - Installs a global uncaught-exception handler that wipes cached passphrases
- *   before delegating to the platform default handler.
- * - Registers the BouncyCastle security provider and seeds default database
- *   records on a background [appScope] coroutine.
- * - Listens for `ACTION_SCREEN_OFF` and low-memory callbacks to proactively
- *   clear the in-memory [OverlayPassphraseSession] cache.
  */
 @HiltAndroidApp
 class PgpShieldApplication : Application() {
@@ -52,6 +43,7 @@ class PgpShieldApplication : Application() {
     @Inject lateinit var settingsRepository: SettingsRepository
     @Inject lateinit var keyRepository: KeyRepository
     @Inject lateinit var overlayPassphraseSession: OverlayPassphraseSession
+    @Inject lateinit var appLockManager: AppLockManager
 
     private val appScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val screenOffReceiver = object : BroadcastReceiver() {
@@ -61,6 +53,7 @@ class PgpShieldApplication : Application() {
             Thread {
                 try {
                     overlayPassphraseSession.clearAll()
+                    appLockManager.lock()
                 } finally {
                     pendingResult.finish()
                 }
@@ -122,6 +115,7 @@ class PgpShieldApplication : Application() {
         super.onTrimMemory(level)
         if (level >= ComponentCallbacks2.TRIM_MEMORY_BACKGROUND) {
             overlayPassphraseSession.clearAll()
+            appLockManager.lock()
         }
     }
 

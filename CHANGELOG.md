@@ -1,5 +1,18 @@
 # Changelog
 
+## Unreleased
+
+## 1.0.3
+
+### Security (Pixel StrongBox / Android Keystore)
+- Vault MasterKey prefers **StrongBox** (Titan), falls back to TEE Keystore
+- Secret blobs migrate transparently to StrongBox-backed alias `_pgp_shield_vault_v2_`
+- Settings migrated from cleartext prefs to **EncryptedSharedPreferences** (StrongBox-preferred)
+- App lock: Class-3 biometric **or** device PIN/pattern (`BiometricPrompt`) before UI / secret access
+- Screen-off / low-memory: wipe overlay passphrases + re-lock app
+- Settings shows live hardware security summary (StrongBox / TEE / device lock)
+- **ARM MTE** built-in: `android:memtagMode=async` (release) / `sync` (debug); **GWP-ASan always**; TBI pointer tagging on; `extractNativeLibs=false`
+
 ## 1.0.2
 
 - Dependency updates (AGP 9.3, Kotlin 2.4, Compose BOM 2026.06, Room/Hilt/BouncyCastle and related libraries).

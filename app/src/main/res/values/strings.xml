@@ -91,6 +91,7 @@
 
     <string name="settings_title">Settings</string>
     <string name="settings_security">Security</string>
+    <string name="settings_hardware_security">Hardware protection (StrongBox / MTE / Keystore)</string>
     <string name="settings_default_encrypt_key">Default encrypt key</string>
     <string name="settings_default_sign_key">Default sign key</string>
     <string name="settings_keys">Keys</string>
