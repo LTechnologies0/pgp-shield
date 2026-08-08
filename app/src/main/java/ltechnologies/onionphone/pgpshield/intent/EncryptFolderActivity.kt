@@ -8,8 +8,6 @@ import android.content.Intent
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
-import androidx.activity.ComponentActivity
-import androidx.activity.compose.setContent
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -35,11 +33,11 @@ import ltechnologies.onionphone.pgpshield.data.SettingsRepository
 import ltechnologies.onionphone.pgpshield.engine.NamedFile
 import ltechnologies.onionphone.pgpshield.engine.PgpIo
 import ltechnologies.onionphone.pgpshield.ui.components.IntentFlowScaffold
-import ltechnologies.onionphone.pgpshield.ui.theme.PgpShieldTheme
-import ltechnologies.onionphone.pgpshield.util.WindowSecureHelper
 import java.io.File
 import javax.inject.Inject
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
@@ -51,7 +49,7 @@ import kotlinx.coroutines.withContext
  * caller-specified output path.
  */
 @AndroidEntryPoint
-class EncryptFolderActivity : ComponentActivity() {
+class EncryptFolderActivity : LockedIntentActivity() {
     @Inject lateinit var cryptoOperations: CryptoOperations
     @Inject lateinit var keyRepository: KeyRepository
     @Inject lateinit var settingsRepository: SettingsRepository
@@ -59,12 +57,10 @@ class EncryptFolderActivity : ComponentActivity() {
     /** Builds the encrypt-folder UI and, in integration mode, auto-runs archiving. */
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        WindowSecureHelper.bind(this, settingsRepository)
-        val integrationMode = IntentResultWriter.isCallerIntegration(intent)
+                val integrationMode = IntentResultWriter.isCallerIntegration(intent)
         val archiveName = intent.getStringExtra(PgpIntentActions.EXTRA_ARCHIVE_NAME) ?: "archive.gpg"
         val folderLabel = intent.getStringExtra(PgpIntentActions.EXTRA_FOLDER_LABEL) ?: archiveName
-        setContent {
-            PgpShieldTheme {
+        setVaultGatedContent(settingsRepository) {
                 var status by remember {
                     mutableStateOf(getString(R.string.intent_status_ready_encrypt_folder_fmt, folderLabel))
                 }
@@ -134,7 +130,6 @@ class EncryptFolderActivity : ComponentActivity() {
                         }
                     }
                 }
-            }
         }
     }
 
@@ -155,10 +150,14 @@ class EncryptFolderActivity : ComponentActivity() {
         val uris = readStreamUris()
         val paths = intent.getStringArrayListExtra(PgpIntentActions.EXTRA_RELATIVE_PATHS).orEmpty()
         require(uris.size == paths.size) { "URI / path count mismatch" }
-        uris.mapIndexed { index, uri ->
-            val bytes = contentResolver.openInputStream(uri)?.use { PgpIo.readLimited(it) }
-                ?: error("Could not read ${paths[index]}")
-            NamedFile(paths[index], bytes)
+        kotlinx.coroutines.coroutineScope {
+            uris.mapIndexed { index, uri ->
+                async(Dispatchers.IO) {
+                    val bytes = contentResolver.openInputStream(uri)?.use { PgpIo.readLimited(it) }
+                        ?: error("Could not read ${paths[index]}")
+                    NamedFile(paths[index], bytes)
+                }
+            }.map { it.await() }
         }
     }
 

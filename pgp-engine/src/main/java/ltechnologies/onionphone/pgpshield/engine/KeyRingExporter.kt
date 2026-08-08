@@ -14,12 +14,9 @@ import org.bouncycastle.openpgp.PGPPublicKeyRing
 import org.bouncycastle.openpgp.PGPSecretKeyRing
 import org.bouncycastle.openpgp.PGPObjectFactory
 import org.bouncycastle.openpgp.PGPUtil
-import org.bouncycastle.openpgp.operator.jcajce.JcaKeyFingerprintCalculator
 
 /** Converts armored secret key rings to armored public key rings. */
 object KeyRingExporter {
-    private val fingerprintCalculator = JcaKeyFingerprintCalculator()
-
     init {
         BouncyCastleProviderHolder.ensureRegistered()
     }
@@ -32,7 +29,7 @@ object KeyRingExporter {
      */
     fun publicArmoredFromSecret(secretArmored: ByteArray): ByteArray {
         val secretRing = PGPUtil.getDecoderStream(ByteArrayInputStream(secretArmored)).use { input ->
-            PGPObjectFactory(input, fingerprintCalculator).nextObject() as PGPSecretKeyRing
+            PGPObjectFactory(input, PgpFingerprints.calculator).nextObject() as PGPSecretKeyRing
         }
         val publicKeys = ArrayList<PGPPublicKey>()
         val iter = secretRing.secretKeys

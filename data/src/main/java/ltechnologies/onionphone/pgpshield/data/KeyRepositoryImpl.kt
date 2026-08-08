@@ -3,6 +3,7 @@ package ltechnologies.onionphone.pgpshield.data
 import ltechnologies.onionphone.pgpshield.data.db.AppDatabase
 import ltechnologies.onionphone.pgpshield.data.db.KeyRingEntity
 import ltechnologies.onionphone.pgpshield.data.db.UserIdEntity
+import ltechnologies.onionphone.pgpshield.data.security.HardwarePassphraseVault
 import ltechnologies.onionphone.pgpshield.data.vault.KeyBlobStore
 import ltechnologies.onionphone.pgpshield.engine.AlgorithmLabels
 import ltechnologies.onionphone.pgpshield.engine.KeyRingExporter
@@ -11,10 +12,12 @@ import ltechnologies.onionphone.pgpshield.engine.PgpAlgorithmPolicy
 import ltechnologies.onionphone.pgpshield.engine.model.KeyRingInfo
 import javax.inject.Inject
 import javax.inject.Singleton
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.flowOn
-import kotlinx.coroutines.Dispatchers
 
 /**
  * Default [KeyRepository] implementation coordinating Room, [KeyBlobStore], and the PGP engine.
@@ -27,6 +30,7 @@ class KeyRepositoryImpl @Inject constructor(
     private val database: AppDatabase,
     private val blobStore: KeyBlobStore,
     private val keyserverClient: KeyserverClient,
+    private val hardwarePassphraseVault: HardwarePassphraseVault,
 ) : KeyRepository {
     private val reader = KeyRingReader()
 
@@ -47,11 +51,16 @@ class KeyRepositoryImpl @Inject constructor(
     override suspend fun importKeyRing(armored: ByteArray, secret: Boolean): KeyRingInfo {
         ImportGuard.checkSize(armored)
         val info = readAndValidate(armored, secret)
-        val path = blobStore.write(info.masterKeyId, armored)
-        val publicPath = if (secret) {
-            blobStore.writePublic(info.masterKeyId, KeyRingExporter.publicArmoredFromSecret(armored))
-        } else {
-            null
+        val (path, publicPath) = coroutineScope {
+            val secretDef = async(Dispatchers.IO) { blobStore.write(info.masterKeyId, armored) }
+            val publicDef = if (secret) {
+                async(Dispatchers.IO) {
+                    blobStore.writePublic(info.masterKeyId, KeyRingExporter.publicArmoredFromSecret(armored))
+                }
+            } else {
+                null
+            }
+            secretDef.await() to publicDef?.await()
         }
         persist(info, path, publicPath, secret, algorithmLabel(info))
         return info
@@ -62,23 +71,41 @@ class KeyRepositoryImpl @Inject constructor(
         publicArmored: ByteArray,
         secretArmored: ByteArray,
         primaryAlgorithm: String,
+        hardwareManagedPassphrase: Boolean,
     ): KeyRingInfo {
         ImportGuard.checkSize(secretArmored)
         val info = readAndValidate(secretArmored, secret = true)
-        val secretPath = blobStore.write(info.masterKeyId, secretArmored)
-        val publicPath = blobStore.writePublic(info.masterKeyId, publicArmored)
-        persist(info, secretPath, publicPath, secret = true, primaryAlgorithm)
+        val (secretPath, publicPath) = coroutineScope {
+            val s = async(Dispatchers.IO) { blobStore.write(info.masterKeyId, secretArmored) }
+            val p = async(Dispatchers.IO) { blobStore.writePublic(info.masterKeyId, publicArmored) }
+            s.await() to p.await()
+        }
+        persist(
+            info,
+            secretPath,
+            publicPath,
+            secret = true,
+            primaryAlgorithm,
+            hardwareManagedPassphrase = hardwareManagedPassphrase,
+        )
         return info
     }
 
     /** @see KeyRepository.getKeyDetail */
     override suspend fun getKeyDetail(keyId: Long): KeyDetail? {
         val entity = database.keyRingDao().getById(keyId) ?: return null
-        val armored = runCatching { blobStore.read(entity.blobPath) }.getOrElse {
+        val armored = try {
+            if (!blobStore.ensureBlobPresent(entity.blobPath)) {
+                throw java.io.FileNotFoundException(entity.blobPath)
+            }
+            blobStore.read(entity.blobPath)
+        } catch (_: java.io.FileNotFoundException) {
+            // Blob truly gone — drop orphan Room metadata only.
             database.userIdDao().deleteForKey(keyId)
             database.keyRingDao().delete(keyId)
             return null
         }
+        // Crypto / app-lock failures must NOT delete key metadata (would destroy recoverability).
         val info = if (entity.isSecret) {
             reader.readSecretKeyRing(armored.inputStream())
         } else {
@@ -108,6 +135,7 @@ class KeyRepositoryImpl @Inject constructor(
             ?: throw IllegalStateException("Key not found: 0x${keyId.toULong().toString(16).uppercase()}")
         blobStore.delete(entity.blobPath)
         entity.publicBlobPath?.let { blobStore.delete(it) }
+        hardwarePassphraseVault.deletePassphrase(keyId)
         database.userIdDao().deleteForKey(keyId)
         database.keyRingDao().delete(keyId)
     }
@@ -115,29 +143,47 @@ class KeyRepositoryImpl @Inject constructor(
     /** @see KeyRepository.search */
     override suspend fun search(query: String): List<KeySummary> {
         val rings = database.keyRingDao().search(query)
-        return rings.map { ring ->
-            ring.toSummary(database.userIdDao().forKey(ring.masterKeyId))
-        }
+        if (rings.isEmpty()) return emptyList()
+        val uidsByKey = database.userIdDao().getAll().groupBy { it.masterKeyId }
+        return rings.map { ring -> ring.toSummary(uidsByKey[ring.masterKeyId].orEmpty()) }
     }
 
     /** @see KeyRepository.getArmoredSecret */
     override suspend fun getArmoredSecret(keyId: Long): ByteArray? {
         val entity = database.keyRingDao().getById(keyId) ?: return null
         if (!entity.isSecret) return null
-        return runCatching { blobStore.read(entity.blobPath) }.getOrNull()
+        if (!blobStore.ensureBlobPresent(entity.blobPath)) return null
+        // Propagate lock/crypto failures — do not swallow as "missing key".
+        return blobStore.read(entity.blobPath)
     }
 
     /** @see KeyRepository.getArmoredPublic */
     override suspend fun getArmoredPublic(keyId: Long): ByteArray? {
         val entity = database.keyRingDao().getById(keyId) ?: return null
         entity.publicBlobPath?.let { path ->
-            return runCatching { blobStore.read(path) }.getOrNull()
+            if (!blobStore.ensureBlobPresent(path)) return@let
+            return blobStore.read(path)
         }
-        val blob = runCatching { blobStore.read(entity.blobPath) }.getOrNull() ?: return null
+        if (!blobStore.ensureBlobPresent(entity.blobPath)) return null
+        val blob = blobStore.read(entity.blobPath)
         return if (entity.isSecret) {
             KeyRingExporter.publicArmoredFromSecret(blob)
         } else {
             blob
+        }
+    }
+
+    /** @see KeyRepository.isEncryptRecipientAllowed */
+    override suspend fun isEncryptRecipientAllowed(keyId: Long): Boolean {
+        val entity = database.keyRingDao().getById(keyId) ?: return false
+        if (entity.isRevoked || entity.trustLevel == KeySummary.TRUST_NEVER) return false
+        val armored = getArmoredPublic(keyId) ?: return false
+        return try {
+            // Rejects expired / weak / disallowed algorithms at encrypt time.
+            readAndValidate(armored, secret = false, allowRevoked = false)
+            true
+        } catch (_: Exception) {
+            false
         }
     }
 
@@ -153,11 +199,23 @@ class KeyRepositoryImpl @Inject constructor(
         val entity = database.keyRingDao().getById(keyId) ?: throw IllegalArgumentException("Unknown key $keyId")
         if (!entity.isSecret) throw IllegalArgumentException("Not a secret key")
         val info = readAndValidate(secretArmored, secret = true, allowRevoked = true)
-        blobStore.write(entity.masterKeyId, secretArmored)
-        blobStore.writePublic(entity.masterKeyId, publicArmored)
+        val (secretPath, publicPath) = coroutineScope {
+            val s = async(Dispatchers.IO) { blobStore.write(entity.masterKeyId, secretArmored) }
+            val p = async(Dispatchers.IO) { blobStore.writePublic(entity.masterKeyId, publicArmored) }
+            s.await() to p.await()
+        }
+        val oldSecret = entity.blobPath
+        val oldPublic = entity.publicBlobPath
         database.keyRingDao().insert(
-            entity.copy(subkeyCount = info.subkeys.size, isRevoked = info.isRevoked),
+            entity.copy(
+                blobPath = secretPath,
+                publicBlobPath = publicPath,
+                subkeyCount = info.subkeys.size,
+                isRevoked = info.isRevoked,
+            ),
         )
+        if (oldSecret != secretPath) runCatching { blobStore.delete(oldSecret) }
+        if (oldPublic != null && oldPublic != publicPath) runCatching { blobStore.delete(oldPublic) }
     }
 
     /** @see KeyRepository.generateRevocationCert */
@@ -279,8 +337,8 @@ class KeyRepositoryImpl @Inject constructor(
     override suspend fun purgeMissingBlobKeys(): Int {
         var removed = 0
         for (entity in database.keyRingDao().getAll()) {
-            val blobMissing = !java.io.File(entity.blobPath).isFile
-            if (blobMissing) {
+            val present = blobStore.ensureBlobPresent(entity.blobPath)
+            if (!present) {
                 database.userIdDao().deleteForKey(entity.masterKeyId)
                 database.keyRingDao().delete(entity.masterKeyId)
                 removed++
@@ -305,6 +363,7 @@ class KeyRepositoryImpl @Inject constructor(
         publicBlobPath: String?,
         secret: Boolean,
         primaryAlgorithm: String,
+        hardwareManagedPassphrase: Boolean = false,
     ) {
         database.keyRingDao().insert(
             KeyRingEntity(
@@ -317,6 +376,7 @@ class KeyRepositoryImpl @Inject constructor(
                 createdAt = System.currentTimeMillis(),
                 primaryAlgorithm = primaryAlgorithm,
                 subkeyCount = info.subkeys.size,
+                hardwareManagedPassphrase = hardwareManagedPassphrase,
             ),
         )
         database.userIdDao().deleteForKey(info.masterKeyId)
@@ -349,5 +409,6 @@ class KeyRepositoryImpl @Inject constructor(
             createdAt = createdAt,
             subkeyCount = subkeyCount,
             trustLevel = trustLevel,
+            hardwareManagedPassphrase = hardwareManagedPassphrase,
         )
 }

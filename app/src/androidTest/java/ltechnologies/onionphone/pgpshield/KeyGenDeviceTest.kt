@@ -32,6 +32,10 @@ class KeyGenDeviceTest {
     fun ecdsaP384_generatesOnDevice() = generateAndRoundTrip(KeyAlgorithmType.ECDSA_P384)
 
     @Test
+    fun brainpoolP256r1_generatesOnDevice() =
+        generateAndRoundTrip(KeyAlgorithmType.ECDSA_BRAINPOOL_P256R1)
+
+    @Test
     fun dsaElgamal_generatesOnDevice() {
         try {
             generateAndRoundTrip(KeyAlgorithmType.DSA_ELGAMAL)
@@ -48,7 +52,7 @@ class KeyGenDeviceTest {
         BouncyCastleProviderHolder.ensureRegistered()
         val passphrase = "device-subkey-rsa".toCharArray()
         try {
-            val base = KeyGenerator().generateKeyRing(
+            val base = KeyGenerator().generateKeyRingBlocking(
                 GenerateKeyRequest(
                     userId = "Subkey RSA <sub@pgpshield.test>",
                     passphrase = passphrase,
@@ -74,7 +78,7 @@ class KeyGenDeviceTest {
         BouncyCastleProviderHolder.ensureRegistered()
         val passphrase = "device-pass-${type.name}".toCharArray()
         try {
-            val generated = KeyGenerator().generateKeyRing(
+            val generated = KeyGenerator().generateKeyRingBlocking(
                 GenerateKeyRequest(
                     userId = "Device ${type.name} <dev@pgpshield.test>",
                     passphrase = passphrase,

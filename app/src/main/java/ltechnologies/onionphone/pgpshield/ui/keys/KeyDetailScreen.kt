@@ -15,6 +15,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.ui.Alignment
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
@@ -23,6 +24,7 @@ import androidx.compose.material3.ExposedDropdownMenuDefaults
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -35,6 +37,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -122,6 +125,7 @@ fun KeyDetailScreen(
 ) {
     val keys by listViewModel.keys.collectAsStateWithLifecycle()
     val opError by listViewModel.error.collectAsState()
+    val opLoading by listViewModel.isLoading.collectAsState()
     val key = keys.find { it.masterKeyId == keyId }
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
@@ -148,22 +152,20 @@ fun KeyDetailScreen(
     var oldPassphrase by remember { mutableStateOf("") }
     var newPassphrase by remember { mutableStateOf("") }
 
+    DisposableEffect(Unit) {
+        onDispose {
+            revokePassphrase = ""
+            certifyPassphrase = ""
+            addUserIdPassphrase = ""
+            oldPassphrase = ""
+            newPassphrase = ""
+        }
+    }
+
     LaunchedEffect(keyId) {
         detailLoaded = false
         detail = detailViewModel.loadDetail(keyId)
         detailLoaded = true
-        // #region agent log
-        ltechnologies.onionphone.pgpshield.util.DebugAgentLog.log(
-            location = "KeyDetailScreen.kt:LaunchedEffect",
-            message = "detail loaded",
-            data = mapOf(
-                "keyId" to keyId,
-                "foundInList" to (key != null),
-                "detailLoaded" to (detail != null),
-            ),
-            hypothesisId = "C",
-        )
-        // #endregion
     }
 
     LaunchedEffect(detailLoaded, detail, key) {
@@ -195,6 +197,7 @@ fun KeyDetailScreen(
                 ChipRow(modifier = Modifier.padding(top = 4.dp)) {
                     AlgorithmChip(summary.primaryAlgorithm)
                     if (summary.isSecret) AlgorithmChip("Secret")
+                    if (summary.hardwareManagedPassphrase) AlgorithmChip("StrongBox passphrase")
                     if (summary.isRevoked) RevokedBadge()
                 }
 
@@ -221,6 +224,7 @@ fun KeyDetailScreen(
                         ) {
                             KeyDetailExportSection(
                                 isSecret = summary.isSecret,
+                                hardwareManagedPassphrase = summary.hardwareManagedPassphrase,
                                 onSharePublic = {
                                     scope.launch {
                                         val armored = detailViewModel.exportPublic(keyId)?.let { String(it, Charsets.UTF_8) }
@@ -244,9 +248,13 @@ fun KeyDetailScreen(
                                 showTrustMenu = showTrustMenu,
                                 onTrustMenuChange = { showTrustMenu = it },
                                 onTrustSelect = { level ->
-                                    listViewModel.setTrustLevel(keyId, level)
+                                    listViewModel.setTrustLevel(keyId, level) {
+                                        scope.launch {
+                                            detail = detailViewModel.loadDetail(keyId)
+                                            status = "Trust set to ${trustLabel(level)}"
+                                        }
+                                    }
                                     showTrustMenu = false
-                                    status = "Trust set to ${trustLabel(level)}"
                                 },
                                 onAddSubkey = { showAddSubkeyDialog = true },
                                 onAddUserId = { showAddUserIdDialog = true },
@@ -279,6 +287,7 @@ fun KeyDetailScreen(
                         KeyDetailSubkeysSection(detail?.subkeys.orEmpty())
                         KeyDetailExportSection(
                         isSecret = summary.isSecret,
+                        hardwareManagedPassphrase = summary.hardwareManagedPassphrase,
                         onSharePublic = {
                             scope.launch {
                                 val armored = detailViewModel.exportPublic(keyId)?.let { String(it, Charsets.UTF_8) }
@@ -302,9 +311,13 @@ fun KeyDetailScreen(
                         showTrustMenu = showTrustMenu,
                         onTrustMenuChange = { showTrustMenu = it },
                         onTrustSelect = { level ->
-                            listViewModel.setTrustLevel(keyId, level)
+                            listViewModel.setTrustLevel(keyId, level) {
+                                scope.launch {
+                                    detail = detailViewModel.loadDetail(keyId)
+                                    status = "Trust set to ${trustLabel(level)}"
+                                }
+                            }
                             showTrustMenu = false
-                            status = "Trust set to ${trustLabel(level)}"
                         },
                         onAddSubkey = { showAddSubkeyDialog = true },
                         onAddUserId = { showAddUserIdDialog = true },
@@ -330,6 +343,12 @@ fun KeyDetailScreen(
                 }
 
                 status?.let { Text(it, modifier = Modifier.padding(top = 8.dp), style = MaterialTheme.typography.bodySmall) }
+                if (opLoading) {
+                    CircularProgressIndicator(
+                        modifier = Modifier.padding(top = 8.dp).size(24.dp),
+                        strokeWidth = 2.dp,
+                    )
+                }
                 opError?.let {
                     Text(
                         it,
@@ -343,11 +362,14 @@ fun KeyDetailScreen(
 
         AddSubkeySheet(
             visible = showAddSubkeyDialog,
+            masterAlgorithm = detail?.subkeys?.firstOrNull { it.keyId == keyId }?.algorithm
+                ?: detail?.subkeys?.firstOrNull()?.algorithm
+                ?: 0,
             onDismiss = { showAddSubkeyDialog = false },
-            onConfirm = { subkeyType, rsaBits, passphrase ->
+            onConfirm = { subkeyType, rsaBits, passphrase, expirySeconds ->
                 showAddSubkeyDialog = false
                 listViewModel.clearError()
-                listViewModel.addSubkey(keyId, passphrase, subkeyType, rsaBits) {
+                listViewModel.addSubkey(keyId, passphrase, subkeyType, rsaBits, expirySeconds) {
                     scope.launch {
                         detail = detailViewModel.loadDetail(keyId)
                         status = "Subkey added"
@@ -477,9 +499,14 @@ fun KeyDetailScreen(
             confirmLabel = "Revoke",
             onDismiss = { showRevokeDialog = false },
             onConfirm = {
-                listViewModel.revokeKey(keyId)
                 showRevokeDialog = false
-                status = "Key marked revoked"
+                listViewModel.clearError()
+                listViewModel.revokeKey(keyId) {
+                    scope.launch {
+                        detail = detailViewModel.loadDetail(keyId)
+                        status = "Key marked revoked"
+                    }
+                }
             },
         )
         DestructiveConfirmDialog(
@@ -704,15 +731,24 @@ private fun CertifyKeySheet(
 @Composable
 private fun AddSubkeySheet(
     visible: Boolean,
+    masterAlgorithm: Int,
     onDismiss: () -> Unit,
-    onConfirm: (SubkeyType, Int, CharArray) -> Unit,
+    onConfirm: (SubkeyType, Int, CharArray, Long) -> Unit,
 ) {
-    var subkeyType by remember { mutableStateOf(SubkeyType.ENCRYPT_CV25519) }
+    val preferredTypes = remember(masterAlgorithm) {
+        PgpAlgorithmPolicy.preferredSubkeyTypesForMaster(masterAlgorithm)
+    }
+    var subkeyType by remember(masterAlgorithm) {
+        mutableStateOf(PgpAlgorithmPolicy.defaultSubkeyTypeForMaster(masterAlgorithm))
+    }
     var rsaBits by remember { mutableIntStateOf(3072) }
     var passphrase by remember { mutableStateOf("") }
+    var expiryYears by remember { mutableStateOf("") }
     var typeMenuExpanded by remember { mutableStateOf(false) }
     var rsaMenuExpanded by remember { mutableStateOf(false) }
-    val needsRsa = subkeyType == SubkeyType.ENCRYPT_RSA || subkeyType == SubkeyType.SIGN_RSA
+    val needsRsa = subkeyType == SubkeyType.ENCRYPT_RSA ||
+        subkeyType == SubkeyType.SIGN_RSA ||
+        subkeyType == SubkeyType.AUTH_RSA
 
     FormBottomSheet(
         visible = visible,
@@ -725,7 +761,9 @@ private fun AddSubkeySheet(
         onConfirm = {
             val pass = passphrase.toCharArray()
             passphrase = ""
-            onConfirm(subkeyType, rsaBits, pass)
+            val years = expiryYears.toLongOrNull()
+            val expirySeconds = if (years != null && years > 0) years * 365L * 24L * 3600L else 0L
+            onConfirm(subkeyType, rsaBits, pass, expirySeconds)
         },
         confirmEnabled = passphrase.isNotEmpty(),
     ) {
@@ -746,7 +784,7 @@ private fun AddSubkeySheet(
                 expanded = typeMenuExpanded,
                 onDismissRequest = { typeMenuExpanded = false },
             ) {
-                PgpAlgorithmPolicy.androidGeneratableSubkeyTypes.forEach { type ->
+                preferredTypes.forEach { type ->
                     DropdownMenuItem(
                         text = { Text(AlgorithmLabels.forSubkeyType(type)) },
                         onClick = {
@@ -792,6 +830,12 @@ private fun AddSubkeySheet(
             onValueChange = { passphrase = it },
             label = { Text("Passphrase") },
             visualTransformation = PasswordVisualTransformation(),
+            modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
+        )
+        OutlinedTextField(
+            value = expiryYears,
+            onValueChange = { expiryYears = it.filter { ch -> ch.isDigit() } },
+            label = { Text("Expiry (years, empty = none)") },
             modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
         )
     }
@@ -866,6 +910,7 @@ private fun KeyDetailSubkeysSection(subkeys: List<ltechnologies.onionphone.pgpsh
 @Composable
 private fun KeyDetailExportSection(
     isSecret: Boolean,
+    hardwareManagedPassphrase: Boolean,
     onSharePublic: () -> Unit,
     onCopyPublic: () -> Unit,
     onChangePassphrase: () -> Unit,
@@ -879,11 +924,20 @@ private fun KeyDetailExportSection(
             Text("Copy public key")
         }
         if (isSecret) {
-            OutlinedButton(onClick = onChangePassphrase, modifier = Modifier.fillMaxWidth()) {
-                Text("Change passphrase…")
-            }
-            OutlinedButton(onClick = onExportSecret, modifier = Modifier.fillMaxWidth()) {
-                Text("Export secret key…")
+            if (hardwareManagedPassphrase) {
+                Text(
+                    text = stringResource(R.string.key_detail_hardware_passphrase),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(vertical = 8.dp),
+                )
+            } else {
+                OutlinedButton(onClick = onChangePassphrase, modifier = Modifier.fillMaxWidth()) {
+                    Text("Change passphrase…")
+                }
+                OutlinedButton(onClick = onExportSecret, modifier = Modifier.fillMaxWidth()) {
+                    Text("Export secret key…")
+                }
             }
         }
     }

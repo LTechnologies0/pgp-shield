@@ -7,10 +7,12 @@ import android.os.Build
 import android.security.keystore.KeyInfo
 import android.security.keystore.KeyProperties
 import android.system.Os
+import androidx.annotation.RequiresApi
 import androidx.biometric.BiometricManager
 import java.security.KeyStore
 import javax.crypto.SecretKey
 import javax.crypto.SecretKeyFactory
+import ltechnologies.onionphone.pgpshield.data.SmimeCertificateStore
 
 /**
  * Snapshot of Android hardware / platform security features available to PGP Shield.
@@ -25,6 +27,12 @@ data class HardwareSecurityReport(
     val vaultKeyStrongBox: Boolean?,
     val vaultKeyHardwareBacked: Boolean?,
     val vaultKeyAlias: String,
+    /** Auth-bound passphrase wrapping key (StrongBox preferred). */
+    val passphraseKeyStrongBox: Boolean? = null,
+    val passphraseKeyHardwareBacked: Boolean? = null,
+    /** S/MIME private-key sealing key (StrongBox preferred, no per-op auth). */
+    val smimeKeyStrongBox: Boolean? = null,
+    val smimeKeyHardwareBacked: Boolean? = null,
     /** Manifest-requested MTE mode: async / sync / off / unknown. */
     val memtagRequested: String,
     /** Runtime MTE mode from prctl, or off / unsupported. */
@@ -42,14 +50,17 @@ object HardwareSecurityCapabilities {
     private const val PR_TAGGED_ADDR_ENABLE = 1 shl 0
     private const val PR_MTE_TCF_SYNC = 1 shl 1
     private const val PR_MTE_TCF_ASYNC = 2 shl 1
-    private const val PR_MTE_TCF_MASK = PR_MTE_TCF_SYNC or PR_MTE_TCF_ASYNC
 
     fun report(context: Context, vaultKeyAlias: String = VaultMasterKeyFactory.ALIAS_V2): HardwareSecurityReport {
         val pm = context.packageManager
         val strongBox = Build.VERSION.SDK_INT >= Build.VERSION_CODES.P &&
             pm.hasSystemFeature(PackageManager.FEATURE_STRONGBOX_KEYSTORE)
-        val hardwareKs = pm.hasSystemFeature(PackageManager.FEATURE_HARDWARE_KEYSTORE) ||
-            Build.VERSION.SDK_INT >= Build.VERSION_CODES.M
+        // FEATURE_HARDWARE_KEYSTORE is API 31+; Keystore itself exists since minSdk.
+        val hardwareKs = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            pm.hasSystemFeature(PackageManager.FEATURE_HARDWARE_KEYSTORE)
+        } else {
+            true
+        }
         val keyguard = context.getSystemService(android.app.KeyguardManager::class.java)
         val deviceSecure = keyguard?.isDeviceSecure == true
         val biometric = BiometricManager.from(context).canAuthenticate(
@@ -58,6 +69,8 @@ object HardwareSecurityCapabilities {
         ) == BiometricManager.BIOMETRIC_SUCCESS
 
         val (isStrongBox, isHardware) = inspectKey(vaultKeyAlias)
+        val (passStrongBox, passHardware) = inspectKey(HardwarePassphraseVault.ALIAS)
+        val (smimeStrongBox, smimeHardware) = inspectKey(SmimeCertificateStore.SMIME_KEY_ALIAS)
         val appInfo = runCatching {
             pm.getApplicationInfo(context.packageName, 0)
         }.getOrNull()
@@ -84,6 +97,20 @@ object HardwareSecurityCapabilities {
                 isHardware == false -> append("software")
                 else -> append("pending")
             }
+            append(" · hw-pass=")
+            when {
+                passStrongBox == true -> append("StrongBox")
+                passHardware == true -> append("TEE+auth")
+                passHardware == false -> append("software")
+                else -> append("pending")
+            }
+            append(" · smime=")
+            when {
+                smimeStrongBox == true -> append("StrongBox")
+                smimeHardware == true -> append("TEE")
+                smimeHardware == false -> append("software")
+                else -> append("pending")
+            }
         }
         return HardwareSecurityReport(
             strongBoxKeystore = strongBox,
@@ -93,6 +120,10 @@ object HardwareSecurityCapabilities {
             vaultKeyStrongBox = isStrongBox,
             vaultKeyHardwareBacked = isHardware,
             vaultKeyAlias = vaultKeyAlias,
+            passphraseKeyStrongBox = passStrongBox,
+            passphraseKeyHardwareBacked = passHardware,
+            smimeKeyStrongBox = smimeStrongBox,
+            smimeKeyHardwareBacked = smimeHardware,
             memtagRequested = memtagRequested,
             memtagRuntime = memtagRuntime,
             gwpAsanRequested = gwpAsan,
@@ -124,34 +155,29 @@ object HardwareSecurityCapabilities {
 
     private fun readMemtagRequested(info: ApplicationInfo?): String {
         if (info == null) return "unknown"
-        return try {
-            // Hidden field ApplicationInfo.memtagMode (API 31+): 0=default,1=off,2=async,3=sync
-            val field = ApplicationInfo::class.java.getDeclaredField("memtagMode")
-            field.isAccessible = true
-            when (field.getInt(info)) {
-                0 -> "default"
-                1 -> "off"
-                2 -> "async"
-                3 -> "sync"
-                else -> "unknown"
-            }
-        } catch (_: Exception) {
-            // Manifest always sets async (release) / sync (debug) — report request intent.
-            "async"
-        }
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.S) return "unsupported"
+        return memtagModeLabel(info)
     }
+
+    @RequiresApi(Build.VERSION_CODES.S)
+    private fun memtagModeLabel(info: ApplicationInfo): String =
+        when (info.memtagMode) {
+            ApplicationInfo.MEMTAG_DEFAULT -> "default"
+            ApplicationInfo.MEMTAG_OFF -> "off"
+            ApplicationInfo.MEMTAG_ASYNC -> "async"
+            ApplicationInfo.MEMTAG_SYNC -> "sync"
+            else -> "unknown"
+        }
 
     private fun readGwpAsanAlways(info: ApplicationInfo?): Boolean {
         if (info == null) return true
-        return try {
-            val field = ApplicationInfo::class.java.getDeclaredField("gwpAsanMode")
-            field.isAccessible = true
-            // 0=default, 1=never, 2=always
-            field.getInt(info) == 2
-        } catch (_: Exception) {
-            true
-        }
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R) return true
+        return gwpAsanIsAlways(info)
     }
+
+    @RequiresApi(Build.VERSION_CODES.R)
+    private fun gwpAsanIsAlways(info: ApplicationInfo): Boolean =
+        info.gwpAsanMode == ApplicationInfo.GWP_ASAN_ALWAYS
 
     private fun inspectKey(alias: String): Pair<Boolean?, Boolean?> {
         return try {

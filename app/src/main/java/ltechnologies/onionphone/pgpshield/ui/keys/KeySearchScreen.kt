@@ -1,8 +1,7 @@
 package ltechnologies.onionphone.pgpshield.ui.keys
 
 /**
- * Compose UI and view model for searching a keyserver and importing the
- * resulting public key.
+ * Key discovery: keyserver browse-then-import + WKD lookup.
  */
 
 import androidx.compose.foundation.layout.Column
@@ -17,7 +16,7 @@ import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
-import ltechnologies.onionphone.pgpshield.ui.components.M3ListCard
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -28,15 +27,9 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
+import androidx.lifecycle.ViewModel
+import androidx.lifecycle.viewModelScope
 import dagger.hilt.android.lifecycle.HiltViewModel
-import ltechnologies.onionphone.pgpshield.R
-import ltechnologies.onionphone.pgpshield.data.KeyRepository
-import ltechnologies.onionphone.pgpshield.data.KeyserverClient
-import ltechnologies.onionphone.pgpshield.data.SettingsRepository
-import ltechnologies.onionphone.pgpshield.ui.components.AdaptiveContentWidth
-import ltechnologies.onionphone.pgpshield.ui.components.ScreenScaffold
-import ltechnologies.onionphone.pgpshield.ui.components.formatKeyId
-import ltechnologies.onionphone.pgpshield.util.SecureScreen
 import javax.inject.Inject
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -44,17 +37,26 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import androidx.lifecycle.ViewModel
-import androidx.lifecycle.viewModelScope
+import ltechnologies.onionphone.pgpshield.R
+import ltechnologies.onionphone.pgpshield.data.KeyRepository
+import ltechnologies.onionphone.pgpshield.data.KeyserverClient
+import ltechnologies.onionphone.pgpshield.data.SettingsRepository
+import ltechnologies.onionphone.pgpshield.data.WkdClient
+import ltechnologies.onionphone.pgpshield.engine.KeyRingReader
+import ltechnologies.onionphone.pgpshield.ui.components.AdaptiveContentWidth
+import ltechnologies.onionphone.pgpshield.ui.components.M3ListCard
+import ltechnologies.onionphone.pgpshield.ui.components.ScreenScaffold
+import ltechnologies.onionphone.pgpshield.ui.components.formatKeyId
+import ltechnologies.onionphone.pgpshield.util.SecureScreen
 
-/** A single key result returned from a keyserver lookup. */
 data class KeyserverHit(
     val userId: String?,
     val keyId: Long,
     val fingerprint: String,
+    val armored: ByteArray,
+    val source: String,
 )
 
-/** Immutable UI state for the keyserver search screen. */
 data class KeySearchUiState(
     val query: String = "",
     val hits: List<KeyserverHit> = emptyList(),
@@ -63,38 +65,33 @@ data class KeySearchUiState(
     val isBusy: Boolean = false,
 )
 
-/**
- * [ViewModel] that performs keyserver lookups and imports the fetched public key
- * into the local repository.
- */
 @HiltViewModel
 class KeySearchViewModel @Inject constructor(
     private val keyserverClient: KeyserverClient,
+    private val wkdClient: WkdClient,
     private val keyRepository: KeyRepository,
     private val settingsRepository: SettingsRepository,
 ) : ViewModel() {
+    private val reader = KeyRingReader()
     private val _uiState = MutableStateFlow(KeySearchUiState())
     val uiState: StateFlow<KeySearchUiState> = _uiState.asStateFlow()
 
-    /** Updates the search query text. */
     fun setQuery(value: String) {
         _uiState.value = _uiState.value.copy(query = value, error = null)
     }
 
-    /** Fetches a key from the configured keyserver and imports it as public. */
-    fun search() {
+    /** Fetch only — does not import until [importHit]. */
+    fun searchKeyserver() {
         viewModelScope.launch {
-            _uiState.value = _uiState.value.copy(isBusy = true, error = null, hits = emptyList())
+            _uiState.value = _uiState.value.copy(isBusy = true, error = null, hits = emptyList(), status = null)
             try {
                 val settings = settingsRepository.current()
-                if (!settings.keyserverLookupEnabled) {
-                    error("Keyserver lookup is disabled in Settings")
-                }
+                if (!settings.keyserverLookupEnabled) error("Keyserver lookup is disabled in Settings")
                 val armored = withContext(Dispatchers.IO) {
                     keyserverClient.fetchKey(settings.keyserverUrl, _uiState.value.query.trim())
                 }
                 val info = withContext(Dispatchers.Default) {
-                    keyRepository.importKeyRing(armored, secret = false)
+                    reader.readPublicKeyRing(armored.inputStream())
                 }
                 _uiState.value = _uiState.value.copy(
                     hits = listOf(
@@ -103,9 +100,11 @@ class KeySearchViewModel @Inject constructor(
                                 ?: info.userIds.firstOrNull()?.userId,
                             keyId = info.masterKeyId,
                             fingerprint = info.fingerprint,
+                            armored = armored,
+                            source = "keyserver",
                         ),
                     ),
-                    status = "Imported public key",
+                    status = "Found key — review then import",
                 )
             } catch (e: Exception) {
                 _uiState.value = _uiState.value.copy(error = e.message ?: "Search failed")
@@ -114,15 +113,55 @@ class KeySearchViewModel @Inject constructor(
             }
         }
     }
+
+    fun searchWkd() {
+        viewModelScope.launch {
+            _uiState.value = _uiState.value.copy(isBusy = true, error = null, hits = emptyList(), status = null)
+            try {
+                val armored = withContext(Dispatchers.IO) {
+                    wkdClient.fetchByEmail(_uiState.value.query.trim())
+                }
+                val info = withContext(Dispatchers.Default) {
+                    reader.readPublicKeyRing(armored.inputStream())
+                }
+                _uiState.value = _uiState.value.copy(
+                    hits = listOf(
+                        KeyserverHit(
+                            userId = info.userIds.firstOrNull { it.isPrimary }?.userId
+                                ?: info.userIds.firstOrNull()?.userId,
+                            keyId = info.masterKeyId,
+                            fingerprint = info.fingerprint,
+                            armored = armored,
+                            source = "WKD",
+                        ),
+                    ),
+                    status = "Found via WKD — review then import",
+                )
+            } catch (e: Exception) {
+                _uiState.value = _uiState.value.copy(error = e.message ?: "WKD failed")
+            } finally {
+                _uiState.value = _uiState.value.copy(isBusy = false)
+            }
+        }
+    }
+
+    fun importHit(hit: KeyserverHit) {
+        viewModelScope.launch {
+            _uiState.value = _uiState.value.copy(isBusy = true, error = null)
+            try {
+                withContext(Dispatchers.Default) {
+                    keyRepository.importKeyRing(hit.armored, secret = false)
+                }
+                _uiState.value = _uiState.value.copy(status = "Imported ${hit.fingerprint}")
+            } catch (e: Exception) {
+                _uiState.value = _uiState.value.copy(error = e.message ?: "Import failed")
+            } finally {
+                _uiState.value = _uiState.value.copy(isBusy = false)
+            }
+        }
+    }
 }
 
-/**
- * Keyserver search screen: lets the user query by fingerprint/user id and import
- * the returned public key.
- *
- * @param onBack invoked to navigate back.
- * @param viewModel backing [KeySearchViewModel] (defaults to a Hilt instance).
- */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun KeySearchScreen(
@@ -143,55 +182,63 @@ fun KeySearchScreen(
                     .fillMaxSize()
                     .padding(padding),
             ) {
-                Column(Modifier.fillMaxSize()) {
-                Text(
-                    stringResource(R.string.keys_search_desc),
-                    style = MaterialTheme.typography.bodyMedium,
-                )
-                OutlinedTextField(
-                    value = query,
-                    onValueChange = {
-                        query = it
-                        viewModel.setQuery(it)
-                    },
-                    label = { Text(stringResource(R.string.keys_search_query_label)) },
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(top = 8.dp),
-                )
-                Button(
-                    onClick = viewModel::search,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(top = 8.dp),
-                    enabled = query.isNotBlank() && !state.isBusy,
-                ) {
-                    if (state.isBusy) {
-                        CircularProgressIndicator(modifier = Modifier.padding(end = 8.dp), strokeWidth = 2.dp)
+                Column(modifier = Modifier.fillMaxSize()) {
+                    Text(
+                        stringResource(R.string.keys_search_desc),
+                        style = MaterialTheme.typography.bodyMedium,
+                    )
+                    OutlinedTextField(
+                        value = query,
+                        onValueChange = {
+                            query = it
+                            viewModel.setQuery(it)
+                        },
+                        label = { Text(stringResource(R.string.keys_search_query_label)) },
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(top = 12.dp),
+                        singleLine = true,
+                    )
+                    Button(
+                        onClick = viewModel::searchKeyserver,
+                        enabled = !state.isBusy && query.isNotBlank(),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(top = 8.dp),
+                    ) {
+                        Text(stringResource(R.string.keys_search_action))
                     }
-                    Text(stringResource(R.string.keys_search_action))
-                }
-                state.error?.let {
-                    Text(it, color = MaterialTheme.colorScheme.error, modifier = Modifier.padding(top = 8.dp))
-                }
-                state.status?.let {
-                    Text(it, color = MaterialTheme.colorScheme.primary, modifier = Modifier.padding(top = 8.dp))
-                }
-                LazyColumn(
-                    modifier = Modifier
-                        .weight(1f)
-                        .padding(top = 8.dp),
-                ) {
-                    items(state.hits, key = { it.keyId }) { hit ->
-                        M3ListCard(onClick = null, modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp)) {
-                            Column(Modifier.padding(12.dp)) {
-                                Text(hit.userId ?: stringResource(R.string.common_unknown), style = MaterialTheme.typography.titleSmall)
-                                Text(formatKeyId(hit.keyId), style = MaterialTheme.typography.bodySmall)
-                                Text(hit.fingerprint, style = MaterialTheme.typography.labelSmall)
+                    TextButton(
+                        onClick = viewModel::searchWkd,
+                        enabled = !state.isBusy && query.contains('@'),
+                        modifier = Modifier.fillMaxWidth(),
+                    ) {
+                        Text(stringResource(R.string.keys_search_wkd))
+                    }
+                    if (state.isBusy) {
+                        CircularProgressIndicator(modifier = Modifier.padding(16.dp))
+                    }
+                    state.status?.let {
+                        Text(it, style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(top = 8.dp))
+                    }
+                    state.error?.let {
+                        Text(it, color = MaterialTheme.colorScheme.error, modifier = Modifier.padding(top = 8.dp))
+                    }
+                    LazyColumn(modifier = Modifier.padding(top = 8.dp)) {
+                        items(state.hits, key = { it.fingerprint }) { hit ->
+                            M3ListCard(onClick = { viewModel.importHit(hit) }) {
+                                Column(modifier = Modifier.padding(16.dp)) {
+                                    Text(hit.userId ?: formatKeyId(hit.keyId), style = MaterialTheme.typography.titleMedium)
+                                    Text(hit.fingerprint, style = MaterialTheme.typography.bodySmall)
+                                    Text(
+                                        "${hit.source} — ${stringResource(R.string.keys_search_import_selected)}",
+                                        style = MaterialTheme.typography.labelMedium,
+                                        color = MaterialTheme.colorScheme.primary,
+                                    )
+                                }
                             }
                         }
                     }
-                }
                 }
             }
         }

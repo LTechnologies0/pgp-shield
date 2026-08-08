@@ -54,6 +54,10 @@ interface UserIdDao {
     @Query("SELECT * FROM user_ids")
     fun observeAll(): Flow<List<UserIdEntity>>
 
+    /** Returns all user id rows (non-reactive). */
+    @Query("SELECT * FROM user_ids")
+    suspend fun getAll(): List<UserIdEntity>
+
     /** Returns all user ids for [keyId]. */
     @Query("SELECT * FROM user_ids WHERE masterKeyId = :keyId")
     suspend fun forKey(keyId: Long): List<UserIdEntity>

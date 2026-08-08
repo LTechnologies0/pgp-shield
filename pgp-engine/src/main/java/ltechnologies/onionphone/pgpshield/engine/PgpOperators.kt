@@ -9,8 +9,6 @@ package ltechnologies.onionphone.pgpshield.engine
  */
 
 import org.bouncycastle.bcpg.HashAlgorithmTags
-import org.bouncycastle.bcpg.PublicKeyAlgorithmTags
-import org.bouncycastle.bcpg.SymmetricKeyAlgorithmTags
 import org.bouncycastle.bcpg.sig.KeyFlags
 import org.bouncycastle.openpgp.PGPPublicKey
 import org.bouncycastle.openpgp.PGPSecretKey
@@ -29,6 +27,11 @@ import org.bouncycastle.openpgp.operator.jcajce.JcePBESecretKeyEncryptorBuilder
 
 /** Shared operator builders for signing, verification, and secret-key encryption. */
 object PgpOperators {
+    private val bcVerifierProvider: PGPContentVerifierBuilderProvider =
+        BcPGPContentVerifierBuilderProvider()
+    private val jcaVerifierProvider: PGPContentVerifierBuilderProvider =
+        JcaPGPContentVerifierBuilderProvider()
+
     /**
      * Returns a content signer builder for the given public-key algorithm.
      *
@@ -65,11 +68,7 @@ object PgpOperators {
 
     /** Returns a signature verifier provider matching the key material backend. */
     fun contentVerifierProvider(useBcLightweight: Boolean): PGPContentVerifierBuilderProvider =
-        if (useBcLightweight) {
-            BcPGPContentVerifierBuilderProvider()
-        } else {
-            JcaPGPContentVerifierBuilderProvider()
-        }
+        if (useBcLightweight) bcVerifierProvider else jcaVerifierProvider
 
     /**
      * Builds a passphrase encryptor for protecting secret key packets (AES-256, SHA-1 S2K).
@@ -89,6 +88,20 @@ object PgpOperators {
             JcePBESecretKeyEncryptorBuilder(encAlg, digestCalc, s2kCount).build(passphrase)
         }
     }
+
+    /**
+     * AEAD (Argon2) secret-key packet encryptor for v6-style protection.
+     *
+     * Requires the target key's [publicKey] packet (BC AEAD encryptor API).
+     */
+    fun aeadSecretKeyEncryptor(passphrase: CharArray, publicKey: PGPPublicKey): PBESecretKeyEncryptor =
+        org.bouncycastle.openpgp.operator.bc.BcAEADSecretKeyEncryptorBuilder(
+            org.bouncycastle.bcpg.AEADAlgorithmTags.OCB,
+            PgpSecurityConstants.SECRET_KEY_ENCRYPTOR_SYMMETRIC_ALGO,
+            org.bouncycastle.bcpg.S2K.Argon2Params.memoryConstrainedParameters(),
+        )
+            .setSecureRandom(SecureRandomProvider.secureRandom)
+            .build(passphrase, publicKey.publicKeyPacket)
 
     /**
      * Builds a passphrase decryptor for unlocking secret key packets.
@@ -120,16 +133,54 @@ object PgpOperators {
     }
 
     /**
-     * Unlocks a secret key with [passphrase], falling back to the alternate operator backend on failure.
+     * Unlocks a secret key with [passphrase].
      *
-     * @throws Exception if both BC and JCA decryptors fail (wrong passphrase or corrupt packet).
+     * Tries the algorithm-matched backend first. Falls back to the alternate only when
+     * the failure is **not** a passphrase checksum mismatch — wrong passphrase must not
+     * pay a second full S2K (tens of millions of SHA-1 iterations).
+     *
+     * @throws Exception if both backends fail (or the first fails with wrong passphrase).
      */
     fun extractPrivateKey(secretKey: PGPSecretKey, passphrase: CharArray): org.bouncycastle.openpgp.PGPPrivateKey {
         val preferBc = useBcForPublicKey(secretKey.publicKey)
-        return try {
-            secretKey.extractPrivateKey(secretKeyDecryptor(passphrase, preferBc))
-        } catch (_: Exception) {
-            secretKey.extractPrivateKey(secretKeyDecryptor(passphrase, !preferBc))
+        val decryptors = buildList {
+            // RFC 9580 / AEAD-protected secrets: prefer BC OpenPGP API decryptor.
+            add {
+                org.bouncycastle.openpgp.api.bc.BcOpenPGPImplementation()
+                    .pbeSecretKeyDecryptorBuilderProvider()
+                    .provide()
+                    .build(passphrase)
+            }
+            add { secretKeyDecryptor(passphrase, preferBc) }
+            add { secretKeyDecryptor(passphrase, !preferBc) }
         }
+        var last: Exception? = null
+        for (factory in decryptors) {
+            try {
+                return secretKey.extractPrivateKey(factory())
+            } catch (e: Exception) {
+                if (isPassphraseChecksumMismatch(e)) throw e
+                last = e
+            }
+        }
+        throw last ?: PgpException("Failed to unlock secret key")
+    }
+
+    /**
+     * True when unlock failure indicates a wrong passphrase.
+     *
+     * Classic S2K: BC reports secret-key SHA-1 checksum mismatch.
+     * AEAD (Argon2) secret protect: BC reports failure recovering AEAD-protected material.
+     */
+    fun isPassphraseChecksumMismatch(error: Throwable): Boolean {
+        var cur: Throwable? = error
+        while (cur != null) {
+            val msg = cur.message.orEmpty()
+            if (msg.contains("checksum mismatch", ignoreCase = true)) return true
+            if (msg.contains("AEAD protected private key", ignoreCase = true)) return true
+            if (msg.contains("recovering AEAD", ignoreCase = true)) return true
+            cur = cur.cause
+        }
+        return false
     }
 }

@@ -23,7 +23,7 @@ class PgpControlFlowTest {
         val pass = "algo-$type".toCharArray()
         try {
             val key = try {
-                KeyGenerator().generateKeyRing(
+                KeyGenerator().generateKeyRingBlocking(
                     GenerateKeyRequest(
                         userId = "$type <${type.name.lowercase()}@example.com>",
                         passphrase = pass,

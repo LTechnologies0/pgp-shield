@@ -53,7 +53,11 @@ object SensitiveClipboard {
             runCatching {
                 val current = cm.primaryClip?.getItemAt(0)?.coerceToText(context)?.toString()
                 if (current == expected) {
-                    cm.clearPrimaryClip()
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+                        cm.clearPrimaryClip()
+                    } else {
+                        cm.setPrimaryClip(ClipData.newPlainText("", ""))
+                    }
                 }
             }.onFailure { e ->
                 Timber.d(e, "Clipboard auto-clear skipped")

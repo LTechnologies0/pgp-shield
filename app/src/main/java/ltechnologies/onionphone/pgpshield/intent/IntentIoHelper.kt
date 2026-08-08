@@ -54,10 +54,10 @@ object IntentIoHelper {
         }
 
     /**
-     * Resolves the recipient public key to encrypt to (default encrypt key or
-     * the first available key).
+     * Resolves the recipient public key to encrypt to (default encrypt key, then
+     * first allowed key). Skips Never-trusted, revoked, expired, or policy-rejected rings.
      *
-     * @throws IllegalStateException when no recipient key is configured.
+     * @throws IllegalStateException when no allowed recipient key is configured.
      */
     suspend fun loadEncryptPublicKey(
         keyRepository: KeyRepository,
@@ -65,9 +65,15 @@ object IntentIoHelper {
     ): ByteArray = withContext(Dispatchers.IO) {
         val settings = settingsRepository.current()
         val keys = keyRepository.observeKeys().first()
-        val keyId = settings.defaultEncryptKeyId ?: keys.firstOrNull()?.masterKeyId
-        keyId?.let { keyRepository.getArmoredPublic(it) }
-            ?: error("No recipient key configured")
+        val candidates = buildList {
+            settings.defaultEncryptKeyId?.let { add(it) }
+            keys.forEach { add(it.masterKeyId) }
+        }.distinct()
+        for (id in candidates) {
+            if (!keyRepository.isEncryptRecipientAllowed(id)) continue
+            keyRepository.getArmoredPublic(id)?.let { return@withContext it }
+        }
+        error("No allowed recipient key — Never-trusted, revoked, or expired keys are skipped")
     }
 
     /**

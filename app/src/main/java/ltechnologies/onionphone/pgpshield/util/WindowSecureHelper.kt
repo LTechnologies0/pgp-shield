@@ -19,18 +19,10 @@ import kotlinx.coroutines.launch
 object WindowSecureHelper {
     /**
      * Enables or disables `FLAG_SECURE` on [activity] according to
-     * [allowScreenshots] and records the applied policy for diagnostics.
+     * [allowScreenshots].
      */
     fun apply(activity: Activity, allowScreenshots: Boolean) {
         if (allowScreenshots) disable(activity) else enable(activity)
-        // #region agent log
-        DebugAgentLog.log(
-            location = "WindowSecureHelper.kt:apply",
-            message = "screenshot policy applied",
-            data = mapOf("allowScreenshots" to allowScreenshots),
-            hypothesisId = "screenshot",
-        )
-        // #endregion
     }
 
     /** Applies screenshot policy now, on resume, and whenever the setting changes. */

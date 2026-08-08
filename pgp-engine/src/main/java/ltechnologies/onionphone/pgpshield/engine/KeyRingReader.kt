@@ -12,18 +12,16 @@ import ltechnologies.onionphone.pgpshield.engine.model.SubkeyInfo
 import ltechnologies.onionphone.pgpshield.engine.model.UserIdInfo
 import java.io.InputStream
 import java.time.Instant
+import org.bouncycastle.bcpg.ECPublicBCPGKey
 import org.bouncycastle.bcpg.sig.KeyFlags
 import org.bouncycastle.openpgp.PGPPublicKey
 import org.bouncycastle.openpgp.PGPPublicKeyRing
 import org.bouncycastle.openpgp.PGPSecretKeyRing
 import org.bouncycastle.openpgp.PGPSignature
 import org.bouncycastle.openpgp.PGPUtil
-import org.bouncycastle.openpgp.operator.jcajce.JcaKeyFingerprintCalculator
 
 /** Reads OpenPGP key rings and maps them to [KeyRingInfo]. */
 class KeyRingReader {
-    private val fingerprintCalculator = JcaKeyFingerprintCalculator()
-
     init {
         BouncyCastleProviderHolder.ensureRegistered()
     }
@@ -31,7 +29,7 @@ class KeyRingReader {
     /** Parses a public key ring from a binary or armored [input] stream. */
     fun readPublicKeyRing(input: InputStream): KeyRingInfo {
         val decoder = PGPUtil.getDecoderStream(input)
-        val objectFactory = org.bouncycastle.openpgp.PGPObjectFactory(decoder, fingerprintCalculator)
+        val objectFactory = org.bouncycastle.openpgp.PGPObjectFactory(decoder, PgpFingerprints.calculator)
         val ring = objectFactory.nextObject() as? PGPPublicKeyRing
             ?: throw PgpException("No public key ring found")
         return toInfo(ring.publicKey, publicKeys(ring), isSecret = false)
@@ -40,7 +38,7 @@ class KeyRingReader {
     /** Parses a secret key ring from a binary or armored [input] stream. */
     fun readSecretKeyRing(input: InputStream): KeyRingInfo {
         val decoder = PGPUtil.getDecoderStream(input)
-        val objectFactory = org.bouncycastle.openpgp.PGPObjectFactory(decoder, fingerprintCalculator)
+        val objectFactory = org.bouncycastle.openpgp.PGPObjectFactory(decoder, PgpFingerprints.calculator)
         val ring = objectFactory.nextObject() as? PGPSecretKeyRing
             ?: throw PgpException("No secret key ring found")
         val keys = ArrayList<PGPPublicKey>()
@@ -87,6 +85,8 @@ class KeyRingReader {
                 },
                 isRevoked = key.isRevoked,
                 flags = readKeyFlags(key),
+                bitStrength = key.bitStrength,
+                curveOid = readCurveOid(key),
             )
         }
 
@@ -127,6 +127,12 @@ class KeyRingReader {
         }
         return flags
     }
+
+    /** Curve OID for classic EC packets; null for RSA, DSA, Ed/X native tags, or unreadables. */
+    private fun readCurveOid(key: PGPPublicKey): String? =
+        runCatching {
+            (key.publicKeyPacket.key as? ECPublicBCPGKey)?.curveOID?.id
+        }.getOrNull()
 
     companion object {
         /** Formats a raw fingerprint byte array as space-separated uppercase hex. */

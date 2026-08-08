@@ -75,6 +75,7 @@ fun ImportKeyScreen(
 
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
+    val importFileReadFailed = stringResource(R.string.import_file_read_failed)
     val filePicker = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri ->
         if (uri == null) return@rememberLauncherForActivityResult
         scope.launch {
@@ -86,7 +87,7 @@ fun ImportKeyScreen(
                     viewModel.clearError()
                 }
             } catch (e: Exception) {
-                viewModel.reportError(e.message ?: context.getString(R.string.import_file_read_failed))
+                viewModel.reportError(e.message ?: importFileReadFailed)
             }
         }
     }

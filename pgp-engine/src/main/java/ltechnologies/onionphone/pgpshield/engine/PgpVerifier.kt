@@ -9,6 +9,7 @@ package ltechnologies.onionphone.pgpshield.engine
 
 import java.io.ByteArrayInputStream
 import java.io.ByteArrayOutputStream
+import kotlinx.coroutines.runBlocking
 import org.bouncycastle.bcpg.ArmoredInputStream
 import org.bouncycastle.openpgp.PGPObjectFactory
 import org.bouncycastle.openpgp.PGPPublicKey
@@ -16,7 +17,6 @@ import org.bouncycastle.openpgp.PGPPublicKeyRing
 import org.bouncycastle.openpgp.PGPSignature
 import org.bouncycastle.openpgp.PGPSignatureList
 import org.bouncycastle.openpgp.PGPUtil
-import org.bouncycastle.openpgp.operator.jcajce.JcaKeyFingerprintCalculator
 
 /**
  * Input for signature verification.
@@ -50,8 +50,6 @@ data class VerifyResult(
 
 /** Verifies OpenPGP cleartext and detached signatures. */
 class PgpVerifier {
-    private val fingerprintCalculator = JcaKeyFingerprintCalculator()
-
     init {
         BouncyCastleProviderHolder.ensureRegistered()
     }
@@ -62,6 +60,7 @@ class PgpVerifier {
      * Auto-detects cleartext armor; detached verification requires [VerifyRequest.detachedMessage].
      */
     fun verify(request: VerifyRequest): VerifyResult {
+        CryptoProgress.stage(CryptoStage.PREPARE)
         val text = request.signedOrDetached.toString(Charsets.UTF_8)
         return when {
             text.contains("BEGIN PGP SIGNED MESSAGE") ->
@@ -91,7 +90,7 @@ class PgpVerifier {
                 // Re-canonicalize: armor may arrive with LF-only lines after paste/transit,
                 // but the signature was computed over the RFC 4880 CRLF form.
                 val hashed = PgpCleartext.canonicalize(cleartext)
-                val sigList = PGPObjectFactory(armIn, fingerprintCalculator).nextObject() as PGPSignatureList
+                val sigList = PGPObjectFactory(armIn, PgpFingerprints.calculator).nextObject() as PGPSignatureList
                 val sig = sigList[0]
                 val key = findPublicKey(sig.keyID, publicRings) ?: return VerifyResult(
                     valid = false,
@@ -118,7 +117,7 @@ class PgpVerifier {
     ): VerifyResult {
         return try {
             PGPUtil.getDecoderStream(ByteArrayInputStream(signatureArmored)).use { sigStream ->
-            val sigList = PGPObjectFactory(sigStream, fingerprintCalculator).nextObject() as PGPSignatureList
+            val sigList = PGPObjectFactory(sigStream, PgpFingerprints.calculator).nextObject() as PGPSignatureList
             val sig = sigList[0]
             val key = findPublicKey(sig.keyID, publicRings)
                 ?: return VerifyResult(valid = false, signerKeyId = sig.keyID, error = "Signer key not in keyring")
@@ -139,11 +138,16 @@ class PgpVerifier {
 
     /** Initializes and runs signature verification, with BC/JCA operator fallback. */
     private fun verifySignature(sig: PGPSignature, key: PGPPublicKey, data: ByteArray): Boolean {
+        CryptoProgress.stage(CryptoStage.VERIFY_SIGNATURE)
+        PgpAlgorithmPolicy.requireAllowedHash(sig.hashAlgorithm)
+        PgpAlgorithmPolicy.requireHashStrengthForKey(key, sig.hashAlgorithm)
         val useBc = PgpOperators.useBcForPublicKey(key)
         return try {
             sig.init(PgpOperators.contentVerifierProvider(useBc), key)
             sig.update(data)
             sig.verify()
+        } catch (e: PgpException) {
+            throw e
         } catch (_: Exception) {
             sig.init(PgpOperators.contentVerifierProvider(!useBc), key)
             sig.update(data)
@@ -151,19 +155,24 @@ class PgpVerifier {
         }
     }
 
-    /** Looks up a public key by [keyId] across armored key rings. */
+    /** Looks up a public key by [keyId] across armored key rings (parallel parse when many). */
     private fun findPublicKey(keyId: Long, armoredRings: List<ByteArray>): PGPPublicKey? {
-        for (armored in armoredRings) {
-            val ring = readPublicRing(armored) ?: continue
-            ring.getPublicKey(keyId)?.let { return it }
+        CryptoProgress.stage(CryptoStage.PARSE_KEYS)
+        if (armoredRings.isEmpty()) return null
+        if (armoredRings.size == 1) {
+            return readPublicRing(armoredRings[0])?.getPublicKey(keyId)
         }
-        return null
+        return runBlocking {
+            BcParallel.firstNotNull(armoredRings) { armored ->
+                readPublicRing(armored)?.getPublicKey(keyId)
+            }
+        }
     }
 
     private fun readPublicRing(armored: ByteArray): PGPPublicKeyRing? {
         return try {
             val input = PGPUtil.getDecoderStream(ByteArrayInputStream(armored))
-            PGPObjectFactory(input, fingerprintCalculator).nextObject() as? PGPPublicKeyRing
+            PGPObjectFactory(input, PgpFingerprints.calculator).nextObject() as? PGPPublicKeyRing
         } catch (_: Exception) {
             null
         }

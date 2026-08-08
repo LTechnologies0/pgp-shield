@@ -25,7 +25,6 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -84,19 +83,6 @@ fun KeyMultiSelectField(
             },
             modifier = Modifier.fillMaxWidth(),
         )
-    }
-
-    LaunchedEffect(showPicker) {
-        if (showPicker) {
-            // #region agent log
-            ltechnologies.onionphone.pgpshield.util.DebugAgentLog.log(
-                location = "KeyMultiSelectPicker.kt:KeyMultiSelectField",
-                message = "key picker opened",
-                data = mapOf("keyCount" to visibleKeys.size, "selectedCount" to selectedIds.size),
-                hypothesisId = "D",
-            )
-            // #endregion
-        }
     }
 
     KeyMultiSelectSheet(

@@ -27,6 +27,7 @@ class VaultIntegrationDeviceTest {
         BouncyCastleProviderHolder.ensureRegistered()
         val app = InstrumentationRegistry.getInstrumentation().targetContext.applicationContext
         val entryPoint = EntryPointAccessors.fromApplication(app, ProviderEntryPoint::class.java)
+        entryPoint.appLockManager().markUnlocked()
         keyRepository = entryPoint.keyRepository()
         cryptoOperations = entryPoint.cryptoOperations()
     }

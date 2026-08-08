@@ -21,6 +21,7 @@ android {
 dependencies {
     implementation(libs.bouncycastle.bcprov)
     implementation(libs.bouncycastle.bcpg)
+    implementation(libs.bouncycastle.bcpkix)
     implementation(libs.kotlinx.coroutines.core)
 
     testImplementation(libs.junit)

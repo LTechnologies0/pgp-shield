@@ -16,6 +16,7 @@ import kotlinx.coroutines.flow.Flow
  * @property createdAt Import or generation timestamp (epoch millis).
  * @property subkeyCount Number of subkeys in the ring.
  * @property trustLevel Local trust: 0=unknown, 1=marginal, 2=full, 3=never.
+ * @property hardwareManagedPassphrase Passphrase sealed in StrongBox/TEE vault.
  */
 data class KeySummary(
     val masterKeyId: Long,
@@ -27,7 +28,16 @@ data class KeySummary(
     val createdAt: Long = 0L,
     val subkeyCount: Int = 1,
     val trustLevel: Int = 0,
-)
+    val hardwareManagedPassphrase: Boolean = false,
+) {
+    companion object {
+        const val TRUST_UNKNOWN = 0
+        const val TRUST_MARGINAL = 1
+        const val TRUST_FULL = 2
+        /** Local owner marked this key as never trusted — refuse encrypt-to. */
+        const val TRUST_NEVER = 3
+    }
+}
 
 /**
  * Full key detail including subkey metadata from the PGP engine.
@@ -61,17 +71,26 @@ interface KeyRepository {
 
     /**
      * Persists a newly generated key pair (separate public and secret armored blocks).
+     *
+     * @param hardwareManagedPassphrase When true, passphrase is sealed in the hardware vault
+     *   and must not be prompted in the UI.
      */
     suspend fun importGeneratedKeyRing(
         publicArmored: ByteArray,
         secretArmored: ByteArray,
         primaryAlgorithm: String,
+        hardwareManagedPassphrase: Boolean = false,
     ): KeyRingInfo
 
     /** Loads key detail and subkeys, or `null` if missing or blob is unreadable. */
     suspend fun getKeyDetail(keyId: Long): KeyDetail?
 
     /** Returns the raw armored blob (secret or public) for [keyId]. */
+    /**
+     * Exports the on-disk blob for [keyId] (secret armored when the ring is secret).
+     * Callers that need public-only material must use [getArmoredPublic] instead —
+     * never fall back to this for third-party API / backup-of-public flows.
+     */
     suspend fun exportKeyRing(keyId: Long): ByteArray
 
     /** Marks [keyId] as revoked in local metadata (does not rewrite the blob). */
@@ -88,6 +107,13 @@ interface KeyRepository {
 
     /** Returns armored public key bytes, deriving from secret if no public blob exists. */
     suspend fun getArmoredPublic(keyId: Long): ByteArray?
+
+    /**
+     * True when [keyId] may be used as an encrypt recipient: present, not revoked,
+     * not marked [KeySummary.TRUST_NEVER], and the public ring still validates
+     * (algorithms / expiry) under [ltechnologies.onionphone.pgpshield.engine.PgpAlgorithmPolicy].
+     */
+    suspend fun isEncryptRecipientAllowed(keyId: Long): Boolean
 
     /** Replaces on-disk secret and public blobs after passphrase or uid changes. */
     suspend fun replaceSecretKeyRing(keyId: Long, secretArmored: ByteArray, publicArmored: ByteArray)

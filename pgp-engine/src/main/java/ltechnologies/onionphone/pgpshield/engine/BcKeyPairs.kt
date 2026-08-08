@@ -36,9 +36,17 @@ object BcKeyPairs {
     fun ed25519(date: Date): Result =
         Result(BcPGPKeyPair(PGPPublicKey.EDDSA, ed25519Raw(), date))
 
+    /** RFC 9580 native Ed25519 algorithm tag (works on v4 packets too). */
+    fun ed25519Native(date: Date): Result =
+        Result(BcPGPKeyPair(PublicKeyAlgorithmTags.Ed25519, ed25519Raw(), date))
+
     /** X25519 (Cv25519) ECDH encryption subkey pair. */
     fun x25519(date: Date): Result =
         Result(BcPGPKeyPair(PGPPublicKey.ECDH, x25519Raw(), date))
+
+    /** RFC 9580 native X25519 algorithm tag. */
+    fun x25519Native(date: Date): Result =
+        Result(BcPGPKeyPair(PublicKeyAlgorithmTags.X25519, x25519Raw(), date))
 
     /** Ed448 signing key pair. */
     fun ed448(date: Date): Result =

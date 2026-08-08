@@ -8,7 +8,6 @@ package ltechnologies.onionphone.pgpshield.engine
  */
 
 import java.nio.ByteBuffer
-import java.security.spec.KeySpec
 import javax.crypto.Cipher
 import javax.crypto.SecretKeyFactory
 import javax.crypto.spec.GCMParameterSpec
@@ -43,8 +42,9 @@ class SymmetricCipher {
      * @return Binary blob containing magic header, salt, IV, and authenticated ciphertext.
      */
     fun encrypt(request: SymmetricEncryptRequest): ByteArray {
-        val salt = SecureRandomProvider.secureRandom.generateSeed(SALT_LEN)
-        val iv = SecureRandomProvider.secureRandom.generateSeed(IV_LEN)
+        // nextBytes (not generateSeed): generateSeed can block on blocking PRNGs.
+        val salt = ByteArray(SALT_LEN).also { SecureRandomProvider.secureRandom.nextBytes(it) }
+        val iv = ByteArray(IV_LEN).also { SecureRandomProvider.secureRandom.nextBytes(it) }
         val key = deriveKey(request.password, salt)
         val cipher = Cipher.getInstance(CIPHER)
         cipher.init(Cipher.ENCRYPT_MODE, key, GCMParameterSpec(GCM_TAG_BITS, iv))
@@ -82,10 +82,13 @@ class SymmetricCipher {
 
     /** Derives a 256-bit AES key from [password] and [salt] via PBKDF2-HMAC-SHA256. */
     private fun deriveKey(password: CharArray, salt: ByteArray): SecretKeySpec {
-        val spec: KeySpec = PBEKeySpec(password, salt, PBKDF2_ITERATIONS, KEY_BITS)
-        val factory = SecretKeyFactory.getInstance(PBKDF2)
-        val raw = factory.generateSecret(spec).encoded
-        return SecretKeySpec(raw, "AES")
+        val spec = PBEKeySpec(password, salt, PBKDF2_ITERATIONS, KEY_BITS)
+        try {
+            val raw = secretKeyFactory.generateSecret(spec).encoded
+            return SecretKeySpec(raw, "AES")
+        } finally {
+            spec.clearPassword()
+        }
     }
 
     companion object {
@@ -98,6 +101,9 @@ class SymmetricCipher {
         private const val PBKDF2_ITERATIONS = 100_000
         private const val PBKDF2 = "PBKDF2WithHmacSHA256"
         private const val CIPHER = "AES/GCM/NoPadding"
+        private val secretKeyFactory: SecretKeyFactory by lazy {
+            SecretKeyFactory.getInstance(PBKDF2)
+        }
 
         /** Round-trip encrypt/decrypt self-check; returns `false` on any failure. */
         fun selfCheck(): Boolean = runCatching {

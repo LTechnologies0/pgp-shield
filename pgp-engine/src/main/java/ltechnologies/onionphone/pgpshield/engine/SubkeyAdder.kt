@@ -21,7 +21,6 @@ import org.bouncycastle.openpgp.PGPSignature
 import org.bouncycastle.openpgp.PGPSignatureGenerator
 import org.bouncycastle.openpgp.PGPSignatureSubpacketGenerator
 import org.bouncycastle.openpgp.PGPUtil
-import org.bouncycastle.openpgp.operator.jcajce.JcaKeyFingerprintCalculator
 
 /**
  * Parameters for adding a subkey to an existing secret key ring.
@@ -36,6 +35,8 @@ data class AddSubkeyRequest(
     val passphrase: CharArray,
     val subkeyType: SubkeyType,
     val rsaBits: Int = 3072,
+    /** Subkey validity in seconds from creation; `0` = no expiry. */
+    val expirySeconds: Long = 0L,
 )
 
 /**
@@ -50,8 +51,6 @@ data class AddSubkeyRequest(
  * subkey material (same effect as OpenKeychain's patched helper).
  */
 class SubkeyAdder {
-    private val fingerprintCalculator = JcaKeyFingerprintCalculator()
-
     init {
         BouncyCastleProviderHolder.ensureRegistered()
     }
@@ -63,7 +62,7 @@ class SubkeyAdder {
      */
     fun addSubkey(request: AddSubkeyRequest): ByteArray {
         val secretRing = PGPUtil.getDecoderStream(ByteArrayInputStream(request.secretKeyRingArmored)).use { input ->
-            PGPObjectFactory(input, fingerprintCalculator).nextObject() as PGPSecretKeyRing
+            PGPObjectFactory(input, PgpFingerprints.calculator).nextObject() as PGPSecretKeyRing
         }
         val masterSecret = secretRing.secretKey
         val masterPublic = masterSecret.publicKey
@@ -79,7 +78,7 @@ class SubkeyAdder {
             masterPrivate = masterPrivate,
             subPair = generated.pair,
             flags = flags,
-            expirySeconds = 0L,
+            expirySeconds = request.expirySeconds,
             masterUseBc = masterUseBc,
             subUseBc = subUseBc,
         )
@@ -91,7 +90,8 @@ class SubkeyAdder {
             certifiedPublic,
             digestCalc,
             false,
-            PgpOperators.secretKeyEncryptor(request.passphrase, subUseBc),
+            // RFC 9580: Argon2+AEAD secret protection (usage 253) for newly added subkeys.
+            PgpOperators.aeadSecretKeyEncryptor(request.passphrase, certifiedPublic),
         )
         val updated = PGPSecretKeyRing.insertSecretKey(secretRing, newSecret)
         return ByteArrayOutputStream().use { out ->
@@ -108,6 +108,9 @@ class SubkeyAdder {
         SubkeyType.ENCRYPT_ECDH_P256,
         SubkeyType.ENCRYPT_ECDH_P384,
         SubkeyType.ENCRYPT_ECDH_P521,
+        SubkeyType.ENCRYPT_ECDH_BRAINPOOL_P256R1,
+        SubkeyType.ENCRYPT_ECDH_BRAINPOOL_P384R1,
+        SubkeyType.ENCRYPT_ECDH_BRAINPOOL_P512R1,
         SubkeyType.ENCRYPT_ELGAMAL,
         -> KeyFlags.ENCRYPT_COMMS or KeyFlags.ENCRYPT_STORAGE
         SubkeyType.AUTH_RSA,
@@ -116,6 +119,9 @@ class SubkeyAdder {
         SubkeyType.AUTH_ECDSA_P256,
         SubkeyType.AUTH_ECDSA_P384,
         SubkeyType.AUTH_ECDSA_P521,
+        SubkeyType.AUTH_ECDSA_BRAINPOOL_P256R1,
+        SubkeyType.AUTH_ECDSA_BRAINPOOL_P384R1,
+        SubkeyType.AUTH_ECDSA_BRAINPOOL_P512R1,
         -> KeyFlags.AUTHENTICATION
         else -> KeyFlags.SIGN_DATA
     }
@@ -157,10 +163,7 @@ class SubkeyAdder {
             setSignatureCreationTime(true, creationTime)
             setKeyFlags(true, flags)
             if (expirySeconds > 0) {
-                setKeyExpirationTime(
-                    true,
-                    expirySeconds - subPair.publicKey.creationTime.time / 1000,
-                )
+                setKeyExpirationTime(true, expirySeconds)
             }
         }.generate()
 

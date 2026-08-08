@@ -2,6 +2,7 @@ package ltechnologies.onionphone.pgpshield.data
 
 import androidx.room.Room
 import ltechnologies.onionphone.pgpshield.data.db.AppDatabase
+import ltechnologies.onionphone.pgpshield.data.security.HardwarePassphraseVault
 import ltechnologies.onionphone.pgpshield.engine.BouncyCastleProviderHolder
 import ltechnologies.onionphone.pgpshield.engine.GenerateKeyRequest
 import ltechnologies.onionphone.pgpshield.engine.KeyAlgorithmType
@@ -35,7 +36,12 @@ class KeyRepositoryFlowTest {
             RuntimeEnvironment.getApplication(),
             AppDatabase::class.java,
         ).allowMainThreadQueries().build()
-        repository = KeyRepositoryImpl(database, InMemoryBlobStore(), KeyserverClient())
+        repository = KeyRepositoryImpl(
+            database,
+            InMemoryBlobStore(),
+            KeyserverClient().also { it.allowLoopbackCleartextForTests = true },
+            HardwarePassphraseVault(RuntimeEnvironment.getApplication()),
+        )
     }
 
     @After
@@ -47,7 +53,7 @@ class KeyRepositoryFlowTest {
     fun import_observe_delete() = runBlocking {
         val pass = "repo-pass".toCharArray()
         try {
-            val generated = KeyGenerator().generateKeyRing(
+            val generated = KeyGenerator().generateKeyRingBlocking(
                 GenerateKeyRequest("Repo <repo@example.com>", pass, KeyAlgorithmType.RSA, 3072),
             )
             val info = repository.importGeneratedKeyRing(
@@ -72,7 +78,7 @@ class KeyRepositoryFlowTest {
     fun upload_refresh_from_keyserver() = runBlocking {
         val pass = "hkp-pass".toCharArray()
         try {
-            val generated = KeyGenerator().generateKeyRing(
+            val generated = KeyGenerator().generateKeyRingBlocking(
                 GenerateKeyRequest("HKP <hkp@example.com>", pass, KeyAlgorithmType.RSA, 3072),
             )
             val info = repository.importGeneratedKeyRing(
@@ -97,10 +103,10 @@ class KeyRepositoryFlowTest {
         val certifierPass = "cert-pass".toCharArray()
         val targetPass = "target-pass".toCharArray()
         try {
-            val certifier = KeyGenerator().generateKeyRing(
+            val certifier = KeyGenerator().generateKeyRingBlocking(
                 GenerateKeyRequest("Cert <c@example.com>", certifierPass, KeyAlgorithmType.RSA, 3072),
             )
-            val target = KeyGenerator().generateKeyRing(
+            val target = KeyGenerator().generateKeyRingBlocking(
                 GenerateKeyRequest("Target <t@example.com>", targetPass, KeyAlgorithmType.RSA, 3072),
             )
             val certifierInfo = repository.importGeneratedKeyRing(
@@ -132,7 +138,7 @@ class KeyRepositoryFlowTest {
     fun applyRevocationCert_marksRevoked() = runBlocking {
         val pass = "apply-rev-pass".toCharArray()
         try {
-            val generated = KeyGenerator().generateKeyRing(
+            val generated = KeyGenerator().generateKeyRingBlocking(
                 GenerateKeyRequest("ApplyRev <ar@example.com>", pass, KeyAlgorithmType.RSA, 2048),
             )
             val info = repository.importGeneratedKeyRing(
@@ -159,7 +165,7 @@ class KeyRepositoryFlowTest {
     fun generateRevocationCert_nonEmpty() = runBlocking {
         val pass = "rev-cert-pass".toCharArray()
         try {
-            val generated = KeyGenerator().generateKeyRing(
+            val generated = KeyGenerator().generateKeyRingBlocking(
                 GenerateKeyRequest("RevCert <rc@example.com>", pass, KeyAlgorithmType.RSA, 3072),
             )
             val info = repository.importGeneratedKeyRing(

@@ -26,6 +26,7 @@ import ltechnologies.onionphone.pgpshield.ui.theme.PgpShieldTheme
 import ltechnologies.onionphone.pgpshield.util.WindowSecureHelper
 import ltechnologies.onionphone.pgpshield.security.AppLockAuthenticator
 import ltechnologies.onionphone.pgpshield.security.AppLockManager
+import ltechnologies.onionphone.pgpshield.security.FidoAppLockManager
 import javax.inject.Inject
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.map
@@ -36,6 +37,7 @@ class MainActivity : FragmentActivity() {
     @Inject lateinit var settingsRepository: SettingsRepository
     @Inject lateinit var appLockManager: AppLockManager
     @Inject lateinit var appLockAuthenticator: AppLockAuthenticator
+    @Inject lateinit var fidoAppLockManager: FidoAppLockManager
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -56,6 +58,7 @@ class MainActivity : FragmentActivity() {
                     AppLockGate(
                         appLockManager = appLockManager,
                         authenticator = appLockAuthenticator,
+                        fidoAppLockManager = fidoAppLockManager,
                     ) {
                         PgpShieldNavHost()
                     }

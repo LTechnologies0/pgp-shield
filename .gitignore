@@ -23,3 +23,4 @@ out/
 *.log
 *.hprof
 .kotlin/
+invizible/

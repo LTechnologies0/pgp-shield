@@ -25,6 +25,9 @@ import androidx.room.PrimaryKey
  * @property primaryAlgorithm Human-readable label for the primary key algorithm.
  * @property subkeyCount Number of subkeys when last parsed.
  * @property trustLevel Local trust: 0=unknown, 1=marginal, 2=full, 3=never.
+ * @property hardwareManagedPassphrase When true, OpenPGP passphrase is sealed in
+ *   [ltechnologies.onionphone.pgpshield.data.security.HardwarePassphraseVault]
+ *   and unlocked via PIN/biometric — UI must not prompt for a passphrase.
  */
 @Entity(tableName = "key_rings")
 data class KeyRingEntity(
@@ -39,6 +42,7 @@ data class KeyRingEntity(
     val subkeyCount: Int = 1,
     /** 0=unknown, 1=marginal, 2=full, 3=never */
     val trustLevel: Int = 0,
+    val hardwareManagedPassphrase: Boolean = false,
 )
 
 /**

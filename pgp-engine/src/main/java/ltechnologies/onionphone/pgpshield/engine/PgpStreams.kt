@@ -11,7 +11,7 @@ import java.io.InputStream
 import org.bouncycastle.openpgp.PGPEncryptedDataList
 import org.bouncycastle.openpgp.PGPObjectFactory
 import org.bouncycastle.openpgp.PGPUtil
-import org.bouncycastle.openpgp.operator.jcajce.JcaKeyFingerprintCalculator
+import org.bouncycastle.openpgp.operator.KeyFingerPrintCalculator
 
 /** Utilities for decoding OpenPGP packet streams. */
 object PgpStreams {
@@ -26,7 +26,7 @@ object PgpStreams {
      */
     fun readEncryptedList(
         data: ByteArray,
-        fingerprintCalculator: JcaKeyFingerprintCalculator,
+        fingerprintCalculator: KeyFingerPrintCalculator = PgpFingerprints.calculator,
     ): PGPEncryptedDataList {
         decoderStream(data).use { stream ->
             val factory = PGPObjectFactory(stream, fingerprintCalculator)

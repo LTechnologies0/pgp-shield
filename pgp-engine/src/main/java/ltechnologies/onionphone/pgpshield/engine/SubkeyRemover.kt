@@ -12,7 +12,6 @@ import org.bouncycastle.bcpg.ArmoredOutputStream
 import org.bouncycastle.openpgp.PGPObjectFactory
 import org.bouncycastle.openpgp.PGPSecretKeyRing
 import org.bouncycastle.openpgp.PGPUtil
-import org.bouncycastle.openpgp.operator.jcajce.JcaKeyFingerprintCalculator
 
 /**
  * Parameters for removing a subkey from a secret key ring.
@@ -27,8 +26,6 @@ data class RemoveSubkeyRequest(
 
 /** Removes non-master subkeys from OpenPGP secret key rings. */
 class SubkeyRemover {
-    private val fingerprintCalculator = JcaKeyFingerprintCalculator()
-
     init {
         BouncyCastleProviderHolder.ensureRegistered()
     }
@@ -42,7 +39,7 @@ class SubkeyRemover {
      */
     fun removeSubkey(request: RemoveSubkeyRequest): ByteArray {
         val ring = PGPUtil.getDecoderStream(ByteArrayInputStream(request.secretKeyRingArmored)).use { input ->
-            PGPObjectFactory(input, fingerprintCalculator).nextObject() as PGPSecretKeyRing
+            PGPObjectFactory(input, PgpFingerprints.calculator).nextObject() as PGPSecretKeyRing
         }
         val count = ring.secretKeys.asSequence().count()
         require(count > 1) { "Cannot remove the only key in the ring" }

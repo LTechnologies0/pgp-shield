@@ -16,7 +16,7 @@ class PgpFileCryptoTest {
         @JvmStatic
         fun generateKey() {
             BouncyCastleProviderHolder.ensureRegistered()
-            generated = KeyGenerator().generateKeyRing(
+            generated = KeyGenerator().generateKeyRingBlocking(
                 GenerateKeyRequest(
                     userId = "File Crypto <file@example.com>",
                     passphrase = passphrase,
@@ -106,7 +106,7 @@ class PgpFileCryptoTest {
                 asciiArmor = false,
             ),
         )
-        assertThrows(Exception::class.java) {
+        val ex = assertThrows(PgpException::class.java) {
             PgpDecryptor().decrypt(
                 DecryptRequest(
                     ciphertext = encrypted.ciphertext,
@@ -115,5 +115,6 @@ class PgpFileCryptoTest {
                 ),
             )
         }
+        assertEquals("Wrong passphrase", ex.message)
     }
 }

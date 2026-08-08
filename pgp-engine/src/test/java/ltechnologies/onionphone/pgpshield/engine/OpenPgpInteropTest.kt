@@ -41,7 +41,7 @@ class OpenPgpInteropTest {
         BouncyCastleProviderHolder.ensureRegistered()
         val pass = "prefs-pass".toCharArray()
         val generated = try {
-            KeyGenerator().generateKeyRing(
+            KeyGenerator().generateKeyRingBlocking(
                 GenerateKeyRequest("Prefs <p@example.com>", pass, KeyAlgorithmType.ED25519),
             )
         } finally {
@@ -65,10 +65,37 @@ class OpenPgpInteropTest {
     }
 
     @Test
-    fun androidUi_excludesNonPortableEd448() {
-        assertFalse(KeyAlgorithmType.ED448 in PgpAlgorithmPolicy.androidGeneratableKeyTypes)
-        assertFalse(SubkeyType.ENCRYPT_X448 in PgpAlgorithmPolicy.androidGeneratableSubkeyTypes)
-        assertFalse(SubkeyType.SIGN_ED448 in PgpAlgorithmPolicy.androidGeneratableSubkeyTypes)
+    fun androidUi_includesEd448AndX448_excludesLegacyDsaElGamal() {
+        assertTrue(KeyAlgorithmType.ED448 in PgpAlgorithmPolicy.androidGeneratableKeyTypes)
+        assertTrue(KeyAlgorithmType.DSA_ELGAMAL !in PgpAlgorithmPolicy.androidGeneratableKeyTypes)
+        assertTrue(SubkeyType.ENCRYPT_X448 in PgpAlgorithmPolicy.androidGeneratableSubkeyTypes)
+        assertTrue(SubkeyType.SIGN_ED448 in PgpAlgorithmPolicy.androidGeneratableSubkeyTypes)
+        assertTrue(SubkeyType.ENCRYPT_ELGAMAL !in PgpAlgorithmPolicy.androidGeneratableSubkeyTypes)
+    }
+
+    @Test
+    fun generatedKey_advertisesAeadAndSeipdV2Features() {
+        BouncyCastleProviderHolder.ensureRegistered()
+        val pass = "aead-prefs-pass".toCharArray()
+        val generated = try {
+            KeyGenerator().generateKeyRingBlocking(
+                GenerateKeyRequest("AeadPrefs <a@example.com>", pass, KeyAlgorithmType.ED25519),
+            )
+        } finally {
+            pass.fill('\u0000')
+        }
+        val ring = PGPUtil.getDecoderStream(generated.publicArmored.inputStream()).use { input ->
+            PGPObjectFactory(input, JcaKeyFingerprintCalculator()).nextObject() as PGPPublicKeyRing
+        }
+        val master = ring.publicKey
+        val selfSig = master.getSignaturesForID("AeadPrefs <a@example.com>").asSequence()
+            .filterIsInstance<PGPSignature>()
+            .first { it.keyID == master.keyID }
+        val features = selfSig.hashedSubPackets.features
+        assertNotNull(features)
+        assertTrue(features!!.supportsModificationDetection())
+        assertTrue(features.supportsSEIPDv2())
+        assertTrue(features.supportsFeature(org.bouncycastle.bcpg.sig.Features.FEATURE_AEAD_ENCRYPTED_DATA))
     }
 
     @Test
@@ -78,7 +105,7 @@ class OpenPgpInteropTest {
         val pass = "gpg-clear-pass".toCharArray()
         val gnupgHome = Files.createTempDirectory("pgp-shield-cleartext")
         try {
-            val generated = KeyGenerator().generateKeyRing(
+            val generated = KeyGenerator().generateKeyRingBlocking(
                 GenerateKeyRequest("Clear <c@example.com>", pass, KeyAlgorithmType.ED25519),
             )
             val signed = PgpSigner().sign(
@@ -119,7 +146,7 @@ class OpenPgpInteropTest {
         BouncyCastleProviderHolder.ensureRegistered()
         val pass = "p521-pref".toCharArray()
         try {
-            val generated = KeyGenerator().generateKeyRing(
+            val generated = KeyGenerator().generateKeyRingBlocking(
                 GenerateKeyRequest("P521 <p521@example.com>", pass, KeyAlgorithmType.ECDSA_P521),
             )
             val ring = PGPUtil.getDecoderStream(generated.publicArmored.inputStream()).use { input ->

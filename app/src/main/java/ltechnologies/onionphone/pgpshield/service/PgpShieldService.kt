@@ -24,10 +24,14 @@ import ltechnologies.onionphone.pgpshield.crypto.CryptoOperations
 import ltechnologies.onionphone.pgpshield.data.KeyRepository
 import ltechnologies.onionphone.pgpshield.data.db.ApiAllowedKeyDao
 import ltechnologies.onionphone.pgpshield.data.db.ApiAppDao
+import ltechnologies.onionphone.pgpshield.security.AppLockManager
+import ltechnologies.onionphone.pgpshield.security.AppLockState
 import ltechnologies.onionphone.pgpshield.util.CallerVerifier
 import ltechnologies.onionphone.pgpshield.util.CryptoErrors
 import javax.inject.Inject
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.runBlocking
 import timber.log.Timber
 
@@ -46,10 +50,16 @@ class PgpShieldService : Service() {
     @Inject lateinit var apiAppDao: ApiAppDao
     @Inject lateinit var apiAllowedKeyDao: ApiAllowedKeyDao
     @Inject lateinit var cryptoOperations: CryptoOperations
+    @Inject lateinit var appLockManager: AppLockManager
 
     // ponytail: binder thread must not run crypto; Default pool only
     private val cryptoDispatcher = Dispatchers.Default
 
+    private fun requireVaultUnlocked() {
+        if (appLockManager.state.value == AppLockState.LOCKED) {
+            error("PGP Shield is locked — open the app and authenticate first")
+        }
+    }
     private val binder = object : IPgpShieldService.Stub() {
         override fun checkPermission(caller: CallerIdentity): Int = runBlocking(cryptoDispatcher) {
             try {
@@ -65,9 +75,16 @@ class PgpShieldService : Service() {
             try {
                 val pkg = CallerVerifier.verifiedPackage(this@PgpShieldService, request.caller)
                 ensureGranted(pkg)
-                val publicKeys = request.recipientKeyIds.toList().mapNotNull { id ->
-                    ensureKeyAllowed(pkg, id)
-                    keyRepository.getArmoredPublic(id)
+                val publicKeys = kotlinx.coroutines.coroutineScope {
+                    request.recipientKeyIds.toList().map { id ->
+                        async(Dispatchers.IO) {
+                            ensureKeyAllowed(pkg, id)
+                            if (!keyRepository.isEncryptRecipientAllowed(id)) {
+                                throw SecurityException("Recipient key is Never-trusted or revoked")
+                            }
+                            keyRepository.getArmoredPublic(id)
+                        }
+                    }.mapNotNull { it.await() }
                 }
                 if (publicKeys.isEmpty()) {
                     return@runBlocking CryptoResultParcel(false, errorMessage = "No recipient keys")
@@ -88,18 +105,25 @@ class PgpShieldService : Service() {
                 val pkg = CallerVerifier.verifiedPackage(this@PgpShieldService, request.caller)
                 ensureGranted(pkg)
                 ensureKeyAllowed(pkg, request.decryptKeyId)
+                requireVaultUnlocked()
                 val secret = keyRepository.getArmoredSecret(request.decryptKeyId)
                     ?: return@runBlocking CryptoResultParcel(
                         false,
                         errorMessage = "Secret key not found",
                         requiresUserInteraction = true,
                     )
+                val cardOk = cryptoOperations.smartCardPort.isAvailable() &&
+                    cryptoOperations.smartCardPort.ownsKey(request.decryptKeyId)
                 passphrase = request.passphrase?.copyOf()
-                    ?: return@runBlocking CryptoResultParcel(
-                        false,
-                        errorMessage = "Passphrase required",
-                        requiresUserInteraction = true,
-                    )
+                    ?: if (cardOk) {
+                        CharArray(0)
+                    } else {
+                        return@runBlocking CryptoResultParcel(
+                            false,
+                            errorMessage = "Passphrase required",
+                            requiresUserInteraction = true,
+                        )
+                    }
                 val result = cryptoOperations.decrypt(request.ciphertext, secret, passphrase)
                 CryptoResultParcel(true, output = result.plaintext)
             } catch (e: SecurityException) {
@@ -118,14 +142,21 @@ class PgpShieldService : Service() {
                 val pkg = CallerVerifier.verifiedPackage(this@PgpShieldService, request.caller)
                 ensureGranted(pkg)
                 ensureKeyAllowed(pkg, request.signKeyId)
+                requireVaultUnlocked()
                 val secret = keyRepository.getArmoredSecret(request.signKeyId)
                     ?: return@runBlocking CryptoResultParcel(false, errorMessage = "Secret key not found")
+                val cardOk = cryptoOperations.smartCardPort.isAvailable() &&
+                    cryptoOperations.smartCardPort.ownsKey(request.signKeyId)
                 passphrase = request.passphrase?.copyOf()
-                    ?: return@runBlocking CryptoResultParcel(
-                        false,
-                        errorMessage = "Passphrase required",
-                        requiresUserInteraction = true,
-                    )
+                    ?: if (cardOk) {
+                        CharArray(0)
+                    } else {
+                        return@runBlocking CryptoResultParcel(
+                            false,
+                            errorMessage = "Passphrase required",
+                            requiresUserInteraction = true,
+                        )
+                    }
                 val result = cryptoOperations.sign(request.data, secret, passphrase)
                 CryptoResultParcel(true, output = result.output)
             } catch (e: SecurityException) {

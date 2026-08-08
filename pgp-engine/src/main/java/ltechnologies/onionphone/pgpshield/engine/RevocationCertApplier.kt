@@ -17,12 +17,9 @@ import org.bouncycastle.openpgp.PGPSecretKeyRing
 import org.bouncycastle.openpgp.PGPSignature
 import org.bouncycastle.openpgp.PGPSignatureList
 import org.bouncycastle.openpgp.PGPUtil
-import org.bouncycastle.openpgp.operator.jcajce.JcaKeyFingerprintCalculator
 
 /** Merges armored revocation signatures into public or secret key rings. */
 class RevocationCertApplier {
-    private val fingerprintCalculator = JcaKeyFingerprintCalculator()
-
     init {
         BouncyCastleProviderHolder.ensureRegistered()
     }
@@ -57,7 +54,7 @@ class RevocationCertApplier {
     /** Parses the first revocation [PGPSignature] from armored input. */
     private fun loadRevocation(armored: ByteArray): PGPSignature =
         PGPUtil.getDecoderStream(ByteArrayInputStream(armored)).use { input ->
-            val factory = PGPObjectFactory(input, fingerprintCalculator)
+            val factory = PGPObjectFactory(input, PgpFingerprints.calculator)
             while (true) {
                 when (val obj = factory.nextObject()) {
                     null -> break
@@ -71,12 +68,12 @@ class RevocationCertApplier {
 
     private fun loadPublicRing(armored: ByteArray): PGPPublicKeyRing =
         PGPUtil.getDecoderStream(ByteArrayInputStream(armored)).use { input ->
-            PGPObjectFactory(input, fingerprintCalculator).nextObject() as PGPPublicKeyRing
+            PGPObjectFactory(input, PgpFingerprints.calculator).nextObject() as PGPPublicKeyRing
         }
 
     private fun loadSecretRing(armored: ByteArray): PGPSecretKeyRing =
         PGPUtil.getDecoderStream(ByteArrayInputStream(armored)).use { input ->
-            PGPObjectFactory(input, fingerprintCalculator).nextObject() as PGPSecretKeyRing
+            PGPObjectFactory(input, PgpFingerprints.calculator).nextObject() as PGPSecretKeyRing
         }
 
     private fun armorPublicRing(ring: PGPPublicKeyRing): ByteArray =

@@ -9,12 +9,16 @@ package ltechnologies.onionphone.pgpshield.engine
 
 import java.io.ByteArrayInputStream
 import java.io.ByteArrayOutputStream
+import java.util.Date
 import org.bouncycastle.bcpg.ArmoredOutputStream
+import org.bouncycastle.openpgp.PGPLiteralData
+import org.bouncycastle.openpgp.PGPLiteralDataGenerator
+import org.bouncycastle.openpgp.PGPPrivateKey
 import org.bouncycastle.openpgp.PGPSecretKey
 import org.bouncycastle.openpgp.PGPSecretKeyRing
+import org.bouncycastle.openpgp.PGPSignature
 import org.bouncycastle.openpgp.PGPSignatureGenerator
 import org.bouncycastle.openpgp.PGPUtil
-import org.bouncycastle.openpgp.operator.jcajce.JcaKeyFingerprintCalculator
 
 /**
  * Parameters for signing data with an OpenPGP secret key ring.
@@ -31,6 +35,10 @@ data class SignRequest(
     val passphrase: CharArray,
     val cleartext: Boolean = true,
     val detachedBinary: Boolean = false,
+    /** When `true`, emit one-pass + literal + signature (binary document). */
+    val inlineBinary: Boolean = false,
+    /** When set and [SmartCardPort.ownsKey] for the signing key, sign via the card. */
+    val smartCard: SmartCardPort? = null,
 )
 
 /** Armored signature output from [PgpSigner.sign]. */
@@ -40,8 +48,6 @@ data class SignResult(
 
 /** Signs messages and produces cleartext or detached OpenPGP signatures. */
 class PgpSigner {
-    private val fingerprintCalculator = JcaKeyFingerprintCalculator()
-
     init {
         BouncyCastleProviderHolder.ensureRegistered()
     }
@@ -52,21 +58,47 @@ class PgpSigner {
      * Uses [SignRequest.detachedBinary] or cleartext mode based on flags.
      */
     fun sign(request: SignRequest): SignResult {
+        CryptoProgress.stage(CryptoStage.PARSE_KEYS)
         val secretRing = PGPUtil.getDecoderStream(ByteArrayInputStream(request.secretKeyRingArmored)).use { input ->
-            org.bouncycastle.openpgp.PGPObjectFactory(input, fingerprintCalculator).nextObject() as PGPSecretKeyRing
+            org.bouncycastle.openpgp.PGPObjectFactory(input, PgpFingerprints.calculator).nextObject() as PGPSecretKeyRing
         }
         val signingKey = findSigningSecretKey(secretRing)
         val useBc = PgpOperators.useBcForPublicKey(signingKey.publicKey)
-        val privateKey = PgpOperators.extractPrivateKey(signingKey, request.passphrase)
+        CryptoProgress.stage(CryptoStage.UNLOCK_SECRET)
+        val card = request.smartCard?.takeIf { it.isAvailable() && it.ownsKey(signingKey.keyID) }
+        val privateKey = if (card != null) {
+            // Stub private key: key id + public packet only; material lives on the card.
+            org.bouncycastle.openpgp.PGPPrivateKey(
+                signingKey.keyID,
+                signingKey.publicKey.publicKeyPacket,
+                null,
+            )
+        } else {
+            PgpOperators.extractPrivateKey(signingKey, request.passphrase)
+        }
         val hashAlgorithm = PgpAlgorithmPolicy.signatureHashForPublicKey(signingKey.publicKey)
 
-        val sigGen = PGPSignatureGenerator(
-            PgpOperators.contentSignerBuilder(signingKey.publicKey, useBc),
-        )
+        CryptoProgress.stage(CryptoStage.SIGN)
+        val signerBuilder = if (card != null) {
+            SmartCardContentSignerBuilder(signingKey.publicKey, card, hashAlgorithm)
+        } else {
+            PgpOperators.contentSignerBuilder(signingKey.publicKey, useBc)
+        }
+        val sigGen = PGPSignatureGenerator(signerBuilder)
+        if (request.inlineBinary) {
+            val binary = buildInlineBinary(request.data, sigGen, privateKey)
+            CryptoProgress.stage(CryptoStage.ARMOR)
+            val armored = ByteArrayOutputStream().use { out ->
+                ArmoredOutputStream(out).use { armor -> armor.write(binary) }
+                out.toByteArray()
+            }
+            return SignResult(output = armored)
+        }
         if (request.detachedBinary) {
-            sigGen.init(org.bouncycastle.openpgp.PGPSignature.BINARY_DOCUMENT, privateKey)
+            sigGen.init(PGPSignature.BINARY_DOCUMENT, privateKey)
             sigGen.update(request.data)
             val signature = sigGen.generate()
+            CryptoProgress.stage(CryptoStage.ARMOR)
             val armored = ByteArrayOutputStream().use { out ->
                 ArmoredOutputStream(out).use { armor -> signature.encode(armor) }
                 out.toByteArray()
@@ -74,7 +106,7 @@ class PgpSigner {
             return SignResult(output = armored)
         }
 
-        sigGen.init(org.bouncycastle.openpgp.PGPSignature.CANONICAL_TEXT_DOCUMENT, privateKey)
+        sigGen.init(PGPSignature.CANONICAL_TEXT_DOCUMENT, privateKey)
 
         // Hash CRLF-canonical text (no trailing CRLF after last line). Write LF
         // line endings in the armor body like GnuPG; verify re-canonicalizes.
@@ -99,6 +131,32 @@ class PgpSigner {
             out.toByteArray()
         }
         return SignResult(output = armored)
+    }
+
+    /** One-pass signature packet + literal + signature (binary document). */
+    private fun buildInlineBinary(
+        data: ByteArray,
+        sigGen: PGPSignatureGenerator,
+        privateKey: PGPPrivateKey,
+    ): ByteArray {
+        sigGen.init(PGPSignature.BINARY_DOCUMENT, privateKey)
+        return ByteArrayOutputStream().use { out ->
+            sigGen.generateOnePassVersion(false).encode(out)
+            val literalGen = PGPLiteralDataGenerator()
+            literalGen.open(
+                out,
+                PGPLiteralData.BINARY,
+                PGPLiteralData.CONSOLE,
+                data.size.toLong(),
+                Date(),
+            ).use { literal ->
+                literal.write(data)
+                sigGen.update(data)
+            }
+            literalGen.close()
+            sigGen.generate().encode(out)
+            out.toByteArray()
+        }
     }
 
     /** Selects the first signing subkey, or falls back to the master key. */

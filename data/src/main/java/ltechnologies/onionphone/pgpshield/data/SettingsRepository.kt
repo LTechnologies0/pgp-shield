@@ -25,6 +25,10 @@ data class AppSettings(
     val autocryptEnabled: Boolean = false,
     /** "system", "en", "fr", "es", "de", "it", "pt" */
     val appLanguage: String = "system",
+    /**
+     * Interop profile name: `RFC9580_MODERN`, `LIBREPGP_GNUPG`, or `LEGACY_MDC`.
+     */
+    val interopProfile: String = "RFC9580_MODERN",
 )
 
 /**
@@ -57,6 +61,7 @@ class SettingsRepository @Inject constructor(
             .putBoolean(KEY_ALLOW_SCREENSHOTS, next.allowScreenshots)
             .putBoolean(KEY_AUTOCRYPT, next.autocryptEnabled)
             .putString(KEY_APP_LANGUAGE, next.appLanguage)
+            .putString(KEY_INTEROP_PROFILE, next.interopProfile)
             .apply()
         _settings.value = next
     }
@@ -77,6 +82,7 @@ class SettingsRepository @Inject constructor(
             allowScreenshots = prefs.getBoolean(KEY_ALLOW_SCREENSHOTS, false),
             autocryptEnabled = prefs.getBoolean(KEY_AUTOCRYPT, false),
             appLanguage = prefs.getString(KEY_APP_LANGUAGE, "system") ?: "system",
+            interopProfile = prefs.getString(KEY_INTEROP_PROFILE, "RFC9580_MODERN") ?: "RFC9580_MODERN",
         )
     }
 
@@ -100,12 +106,13 @@ class SettingsRepository @Inject constructor(
         private const val KEY_ALLOW_SCREENSHOTS = "allow_screenshots"
         private const val KEY_AUTOCRYPT = "autocrypt_enabled"
         private const val KEY_APP_LANGUAGE = "app_language"
+        private const val KEY_INTEROP_PROFILE = "interop_profile"
         private const val KEY_LAST_EXPORT = "last_key_export"
         private const val KEY_MIGRATED = "migrated_from_cleartext_v1"
 
         private fun openPrefs(context: Context): SharedPreferences {
-            val enc = SecurePrefs.create(context, PREFS_NAME)
-            if (!enc.getBoolean(KEY_MIGRATED, false)) {
+            val (enc, reset) = SecurePrefs.createOrReset(context, PREFS_NAME)
+            if (reset || !enc.getBoolean(KEY_MIGRATED, false)) {
                 migrateFromCleartext(context, enc)
             }
             return enc

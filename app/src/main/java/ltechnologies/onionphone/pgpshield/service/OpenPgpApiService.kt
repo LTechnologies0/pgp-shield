@@ -17,17 +17,23 @@ import android.os.ParcelFileDescriptor
 import dagger.hilt.android.AndroidEntryPoint
 import ltechnologies.onionphone.pgpshield.api.GrantApiAccessActivity
 import ltechnologies.onionphone.pgpshield.crypto.CryptoOperations
+import ltechnologies.onionphone.pgpshield.data.AutocryptManager
 import ltechnologies.onionphone.pgpshield.data.KeyRepository
 import ltechnologies.onionphone.pgpshield.data.SettingsRepository
 import ltechnologies.onionphone.pgpshield.data.db.ApiAllowedKeyDao
 import ltechnologies.onionphone.pgpshield.data.db.ApiAppDao
 import ltechnologies.onionphone.pgpshield.data.db.UserIdDao
+import ltechnologies.onionphone.pgpshield.engine.MessageCompression
 import ltechnologies.onionphone.pgpshield.engine.PgpIo
 import ltechnologies.onionphone.pgpshield.openpgp.OpenPgpConstants
+import ltechnologies.onionphone.pgpshield.security.AppLockManager
+import ltechnologies.onionphone.pgpshield.security.AppLockState
 import ltechnologies.onionphone.pgpshield.util.CryptoErrors
 import java.util.concurrent.ConcurrentHashMap
 import javax.inject.Inject
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
 import org.openintents.openpgp.IOpenPgpService2
@@ -48,12 +54,20 @@ class OpenPgpApiService : Service() {
     @Inject lateinit var keyRepository: KeyRepository
     @Inject lateinit var apiAppDao: ApiAppDao
     @Inject lateinit var apiAllowedKeyDao: ApiAllowedKeyDao
+    @Inject lateinit var settingsRepository: SettingsRepository
     @Inject lateinit var userIdDao: UserIdDao
     @Inject lateinit var cryptoOperations: CryptoOperations
-    @Inject lateinit var settingsRepository: SettingsRepository
+    @Inject lateinit var appLockManager: AppLockManager
+    @Inject lateinit var autocryptManager: AutocryptManager
 
     private val cryptoDispatcher = Dispatchers.Default
     private val outputPipes = ConcurrentHashMap<Int, ParcelFileDescriptor>()
+
+    private fun requireVaultUnlocked() {
+        if (appLockManager.state.value == AppLockState.LOCKED) {
+            error("PGP Shield is locked — open the app and authenticate first")
+        }
+    }
 
     private val binder = object : IOpenPgpService2.Stub() {
         override fun createOutputPipe(pipeId: Int): ParcelFileDescriptor {
@@ -97,12 +111,21 @@ class OpenPgpApiService : Service() {
 
             OpenPgpConstants.ACTION_DECRYPT_VERIFY -> handleDecryptVerify(inputBytes, data, callerPkg)
 
+            // ACTION_SIGN is treated as cleartext sign (OpenKeychain / API v11 convention).
             OpenPgpConstants.ACTION_SIGN,
             OpenPgpConstants.ACTION_CLEARTEXT_SIGN,
+            -> handleSign(inputBytes, data, callerPkg, detached = false)
+
             OpenPgpConstants.ACTION_DETACHED_SIGN,
-            -> handleSign(inputBytes, data, callerPkg, detached = action == OpenPgpConstants.ACTION_DETACHED_SIGN)
+            -> handleSign(inputBytes, data, callerPkg, detached = true)
 
             OpenPgpConstants.ACTION_GET_KEY_IDS -> handleGetKeyIds(data)
+
+            OpenPgpConstants.ACTION_GET_KEY -> handleGetKey(data, callerPkg)
+
+            OpenPgpConstants.ACTION_GET_SIGN_KEY_ID -> handleGetSignKeyId(data)
+
+            OpenPgpConstants.ACTION_DECRYPT_METADATA -> handleDecryptMetadata(inputBytes, data, callerPkg)
 
             OpenPgpConstants.ACTION_BACKUP -> handleBackup(data, callerPkg)
 
@@ -125,16 +148,36 @@ class OpenPgpApiService : Service() {
         }
         val asciiArmor = data.getBooleanExtra(OpenPgpConstants.EXTRA_REQUEST_ASCII_ARMOR, false)
         val fileName = data.getStringExtra(OpenPgpConstants.EXTRA_ORIGINAL_FILENAME) ?: "_CONSOLE"
+        val compression = if (data.getBooleanExtra(OpenPgpConstants.EXTRA_ENABLE_COMPRESSION, false)) {
+            MessageCompression.ZLIB
+        } else {
+            MessageCompression.NONE
+        }
         return try {
-            var plaintext = input
-            if (sign) {
-                val signKeyId = resolveSignKeyId(data)
-                val signed = signPayload(plaintext, data, callerPkg, signKeyId, detached = false)
-                    ?: return null to userInteractionResult(callerPkg)
-                plaintext = signed
+            var signSecret: ByteArray? = null
+            var signPass: CharArray? = null
+            try {
+                if (sign) {
+                    val signKeyId = resolveSignKeyId(data)
+                    requireVaultUnlocked()
+                    signPass = data.getCharArrayExtra(OpenPgpConstants.EXTRA_PASSPHRASE)
+                        ?: return null to userInteractionResult(callerPkg)
+                    signSecret = keyRepository.getArmoredSecret(signKeyId)
+                        ?: return null to errorResult(OpenPgpError.GENERIC_ERROR, "Signing key not found")
+                }
+                val encrypted = cryptoOperations.encrypt(
+                    plaintext = input,
+                    recipientPublicArmored = publicKeys,
+                    asciiArmor = asciiArmor,
+                    fileName = fileName,
+                    compression = compression,
+                    signSecretArmored = signSecret,
+                    signPassphrase = signPass,
+                )
+                encrypted.ciphertext to successResult()
+            } finally {
+                signPass?.fill('\u0000')
             }
-            val encrypted = cryptoOperations.encrypt(plaintext, publicKeys, asciiArmor, fileName)
-            encrypted.ciphertext to successResult()
         } catch (e: Exception) {
             Timber.e(e, "OpenPGP encrypt failed")
             null to errorResult(OpenPgpError.GENERIC_ERROR, CryptoErrors.safeMessage(e, "Encryption failed"))
@@ -150,14 +193,39 @@ class OpenPgpApiService : Service() {
         if (secretKeys.isEmpty()) {
             return null to errorResult(OpenPgpError.GENERIC_ERROR, "No secret keys available")
         }
+        requireVaultUnlocked()
         val requestedPass = data.getCharArrayExtra(OpenPgpConstants.EXTRA_PASSPHRASE)
             ?: return null to userInteractionResult(callerPkg)
         try {
-            for (key in secretKeys) {
-                val secret = keyRepository.getArmoredSecret(key.masterKeyId) ?: continue
+            val secrets = coroutineScope {
+                secretKeys.map { key ->
+                    async(Dispatchers.IO) {
+                        key.masterKeyId to (keyRepository.getArmoredSecret(key.masterKeyId) ?: return@async null)
+                    }
+                }.mapNotNull { it.await() }
+            }
+            val signerPubs = secrets.mapNotNull { (id, _) ->
+                keyRepository.getArmoredPublic(id)
+            }
+            for ((_, secret) in secrets) {
                 try {
-                    val decrypted = cryptoOperations.decrypt(input, secret, requestedPass)
-                    return decrypted.plaintext to successResult()
+                    val decrypted = cryptoOperations.decrypt(
+                        input,
+                        secret,
+                        requestedPass,
+                        signerPublicArmored = signerPubs,
+                    )
+                    val result = successResult()
+                    decrypted.signerKeyId?.let {
+                        result.putExtra(OpenPgpConstants.RESULT_SIGN_KEY_ID, it)
+                    }
+                    decrypted.signatureValid?.let {
+                        result.putExtra(OpenPgpConstants.RESULT_SIGNATURE_VERIFIED, it)
+                    }
+                    decrypted.fileName?.let {
+                        result.putExtra(OpenPgpConstants.EXTRA_ORIGINAL_FILENAME, it)
+                    }
+                    return decrypted.plaintext to result
                 } catch (_: Exception) {
                     continue
                 }
@@ -203,6 +271,7 @@ class OpenPgpApiService : Service() {
         detached: Boolean,
     ): ByteArray? {
         if (!isKeyAllowed(callerPkg, signKeyId)) return null
+        requireVaultUnlocked()
         val secret = keyRepository.getArmoredSecret(signKeyId) ?: return null
         val passphrase = data.getCharArrayExtra(OpenPgpConstants.EXTRA_PASSPHRASE) ?: return null
         return try {
@@ -223,13 +292,77 @@ class OpenPgpApiService : Service() {
         }
     }
 
+    private suspend fun handleGetKey(data: Intent, callerPkg: String): Pair<ByteArray?, Intent> {
+        val keyId = data.getLongExtra(OpenPgpConstants.EXTRA_KEY_ID, 0L)
+            .takeIf { it != 0L }
+            ?: data.getLongExtra(OpenPgpConstants.EXTRA_SIGN_KEY_ID, 0L)
+        if (keyId == 0L) {
+            return null to errorResult(OpenPgpError.GENERIC_ERROR, "Missing key_id")
+        }
+        if (!isKeyAllowed(callerPkg, keyId)) {
+            return null to errorResult(OpenPgpError.GENERIC_ERROR, "Key not allowed")
+        }
+        val armored = keyRepository.getArmoredPublic(keyId)
+            ?: return null to errorResult(OpenPgpError.GENERIC_ERROR, "Key not found")
+        return armored to successResult().apply {
+            putExtra(OpenPgpConstants.EXTRA_KEY_ID, keyId)
+        }
+    }
+
+    private suspend fun handleGetSignKeyId(data: Intent): Pair<ByteArray?, Intent> {
+        val keyId = resolveSignKeyId(data)
+        if (keyId == 0L) {
+            return null to errorResult(OpenPgpError.GENERIC_ERROR, "No signing key configured")
+        }
+        return null to successResult().apply {
+            putExtra(OpenPgpConstants.RESULT_SIGN_KEY_ID, keyId)
+            putExtra(OpenPgpConstants.EXTRA_SIGN_KEY_ID, keyId)
+        }
+    }
+
+    private suspend fun handleDecryptMetadata(
+        input: ByteArray,
+        data: Intent,
+        callerPkg: String,
+    ): Pair<ByteArray?, Intent> {
+        // Same decrypt path as DECRYPT_VERIFY, but do not write plaintext to the output pipe.
+        val (plaintext, result) = handleDecryptVerify(input, data, callerPkg)
+        if (result.getIntExtra(OpenPgpConstants.RESULT_CODE, -1) != OpenPgpConstants.RESULT_CODE_SUCCESS) {
+            return null to result
+        }
+        val meta = successResult().apply {
+            putExtra(
+                OpenPgpConstants.EXTRA_ORIGINAL_FILENAME,
+                result.getStringExtra(OpenPgpConstants.EXTRA_ORIGINAL_FILENAME) ?: "_CONSOLE",
+            )
+            putExtra("result_size", plaintext?.size ?: 0)
+            result.getLongExtra(OpenPgpConstants.RESULT_SIGN_KEY_ID, 0L).takeIf { it != 0L }?.let {
+                putExtra(OpenPgpConstants.RESULT_SIGN_KEY_ID, it)
+            }
+            if (result.hasExtra(OpenPgpConstants.RESULT_SIGNATURE_VERIFIED)) {
+                putExtra(
+                    OpenPgpConstants.RESULT_SIGNATURE_VERIFIED,
+                    result.getBooleanExtra(OpenPgpConstants.RESULT_SIGNATURE_VERIFIED, false),
+                )
+            }
+        }
+        return null to meta
+    }
+
     private suspend fun handleBackup(data: Intent, callerPkg: String): Pair<ByteArray?, Intent> {
         val keyIds = data.getLongArrayExtra(OpenPgpConstants.EXTRA_KEY_IDS)
             ?: return null to errorResult(OpenPgpError.GENERIC_ERROR, "Missing key_ids")
         val builder = StringBuilder()
-        for (keyId in keyIds) {
-            if (!isKeyAllowed(callerPkg, keyId)) continue
-            val armored = keyRepository.getArmoredPublic(keyId) ?: keyRepository.exportKeyRing(keyId)
+        val chunks = kotlinx.coroutines.coroutineScope {
+            keyIds.map { keyId ->
+                async(Dispatchers.IO) {
+                    if (!isKeyAllowed(callerPkg, keyId)) return@async null
+                    // Public only — never fall back to exportKeyRing (secret blob).
+                    keyRepository.getArmoredPublic(keyId)
+                }
+            }.mapNotNull { it.await() }
+        }
+        for (armored in chunks) {
             builder.append(String(armored, Charsets.UTF_8))
             if (!builder.endsWith("\n")) builder.append('\n')
         }
@@ -242,16 +375,28 @@ class OpenPgpApiService : Service() {
     private suspend fun resolveRecipientKeys(data: Intent, callerPkg: String): List<ByteArray> {
         val byId = data.getLongArrayExtra(OpenPgpConstants.EXTRA_KEY_IDS)
         if (byId != null) {
-            return byId.toList().mapNotNull { id ->
-                if (!isKeyAllowed(callerPkg, id)) return@mapNotNull null
-                keyRepository.getArmoredPublic(id)
+            return kotlinx.coroutines.coroutineScope {
+                byId.toList().map { id ->
+                    async(Dispatchers.IO) {
+                        if (!isKeyAllowed(callerPkg, id)) return@async null
+                        if (!keyRepository.isEncryptRecipientAllowed(id)) return@async null
+                        keyRepository.getArmoredPublic(id)
+                    }
+                }.mapNotNull { it.await() }
             }
         }
         val userIds = data.getStringArrayExtra(OpenPgpConstants.EXTRA_USER_IDS) ?: return emptyList()
-        return userIds.mapNotNull { uid ->
-            val keyId = userIdDao.findByUserIdFragment(uid).firstOrNull()?.masterKeyId ?: return@mapNotNull null
-            if (!isKeyAllowed(callerPkg, keyId)) return@mapNotNull null
-            keyRepository.getArmoredPublic(keyId)
+        return kotlinx.coroutines.coroutineScope {
+            userIds.map { uid ->
+                async(Dispatchers.IO) {
+                    val keyId = userIdDao.findByUserIdFragment(uid).firstOrNull()?.masterKeyId
+                        ?: autocryptManager.lookup(uid.substringAfter('<').substringBefore('>').ifBlank { uid })
+                        ?: return@async null
+                    if (!isKeyAllowed(callerPkg, keyId)) return@async null
+                    if (!keyRepository.isEncryptRecipientAllowed(keyId)) return@async null
+                    keyRepository.getArmoredPublic(keyId)
+                }
+            }.mapNotNull { it.await() }
         }
     }
 

@@ -13,7 +13,7 @@ class PgpRoundTripTest {
     private fun rsaRoundTrip(rsaBits: Int) {
         BouncyCastleProviderHolder.ensureRegistered()
         val passphrase = "test-passphrase-rsa".toCharArray()
-        val generated = KeyGenerator().generateKeyRing(
+        val generated = KeyGenerator().generateKeyRingBlocking(
             GenerateKeyRequest(
                 userId = "RSA Test <rsa@example.com>",
                 passphrase = passphrase,
@@ -29,7 +29,7 @@ class PgpRoundTripTest {
         BouncyCastleProviderHolder.ensureRegistered()
         val passphrase = "test-passphrase-ed".toCharArray()
         try {
-            val generated = KeyGenerator().generateKeyRing(
+            val generated = KeyGenerator().generateKeyRingBlocking(
                 GenerateKeyRequest(
                     userId = "Ed Test <ed@example.com>",
                     passphrase = passphrase,
@@ -47,7 +47,7 @@ class PgpRoundTripTest {
         BouncyCastleProviderHolder.ensureRegistered()
         val passphrase = "test-passphrase-p256".toCharArray()
         try {
-            val generated = KeyGenerator().generateKeyRing(
+            val generated = KeyGenerator().generateKeyRingBlocking(
                 GenerateKeyRequest(
                     userId = "P256 Test <p256@example.com>",
                     passphrase = passphrase,
@@ -65,7 +65,7 @@ class PgpRoundTripTest {
         BouncyCastleProviderHolder.ensureRegistered()
         val passphrase = "test-passphrase-p384".toCharArray()
         try {
-            val generated = KeyGenerator().generateKeyRing(
+            val generated = KeyGenerator().generateKeyRingBlocking(
                 GenerateKeyRequest(
                     userId = "P384 Test <p384@example.com>",
                     passphrase = passphrase,
@@ -83,7 +83,7 @@ class PgpRoundTripTest {
         BouncyCastleProviderHolder.ensureRegistered()
         val passphrase = "test-passphrase-p521".toCharArray()
         try {
-            val generated = KeyGenerator().generateKeyRing(
+            val generated = KeyGenerator().generateKeyRingBlocking(
                 GenerateKeyRequest(
                     userId = "P521 Test <p521@example.com>",
                     passphrase = passphrase,
@@ -97,11 +97,39 @@ class PgpRoundTripTest {
     }
 
     @Test
+    fun brainpoolP256r1_roundTrip() {
+        BouncyCastleProviderHolder.ensureRegistered()
+        val passphrase = "test-passphrase-bp256".toCharArray()
+        val generated = KeyGenerator().generateKeyRingBlocking(
+            GenerateKeyRequest(
+                userId = "BP256 Test <bp256@example.com>",
+                passphrase = passphrase,
+                algorithmType = KeyAlgorithmType.ECDSA_BRAINPOOL_P256R1,
+            ),
+        )
+        roundTrip(generated, passphrase, "brainpoolP256r1")
+    }
+
+    @Test
+    fun brainpoolP512r1_roundTrip() {
+        BouncyCastleProviderHolder.ensureRegistered()
+        val passphrase = "test-passphrase-bp512".toCharArray()
+        val generated = KeyGenerator().generateKeyRingBlocking(
+            GenerateKeyRequest(
+                userId = "BP512 Test <bp512@example.com>",
+                passphrase = passphrase,
+                algorithmType = KeyAlgorithmType.ECDSA_BRAINPOOL_P512R1,
+            ),
+        )
+        roundTrip(generated, passphrase, "brainpoolP512r1")
+    }
+
+    @Test
     fun ed448_roundTrip() {
         BouncyCastleProviderHolder.ensureRegistered()
         val passphrase = "test-passphrase-ed448".toCharArray()
         try {
-            val generated = KeyGenerator().generateKeyRing(
+            val generated = KeyGenerator().generateKeyRingBlocking(
                 GenerateKeyRequest(
                     userId = "Ed448 Test <ed448@example.com>",
                     passphrase = passphrase,
@@ -119,7 +147,7 @@ class PgpRoundTripTest {
         BouncyCastleProviderHolder.ensureRegistered()
         val passphrase = "test-passphrase-dsa".toCharArray()
         try {
-            val generated = KeyGenerator().generateKeyRing(
+            val generated = KeyGenerator().generateKeyRingBlocking(
                 GenerateKeyRequest(
                     userId = "DSA Test <dsa@example.com>",
                     passphrase = passphrase,
@@ -136,7 +164,7 @@ class PgpRoundTripTest {
     fun generateEncryptDecrypt_roundTrip() {
         BouncyCastleProviderHolder.ensureRegistered()
         val passphrase = "test-passphrase-123".toCharArray()
-        val generated = KeyGenerator().generateKeyRing(
+        val generated = KeyGenerator().generateKeyRingBlocking(
             GenerateKeyRequest(
                 userId = "Test <test@example.com>",
                 passphrase = passphrase,
@@ -151,7 +179,7 @@ class PgpRoundTripTest {
         BouncyCastleProviderHolder.ensureRegistered()
         val passphrase = "subkey-pass".toCharArray()
         try {
-            val base = KeyGenerator().generateKeyRing(
+            val base = KeyGenerator().generateKeyRingBlocking(
                 GenerateKeyRequest(
                     userId = "Subkey <sub@example.com>",
                     passphrase = passphrase,
@@ -180,7 +208,7 @@ class PgpRoundTripTest {
     fun encryptFromSecretArmored_roundTrip() {
         BouncyCastleProviderHolder.ensureRegistered()
         val passphrase = "test-passphrase-456".toCharArray()
-        val generated = KeyGenerator().generateKeyRing(
+        val generated = KeyGenerator().generateKeyRingBlocking(
             GenerateKeyRequest(
                 userId = "Secret <s@e.com>",
                 passphrase = passphrase,
@@ -224,6 +252,7 @@ class PgpRoundTripTest {
         )
 
         assertArrayEquals(plaintext, decrypted.plaintext)
+        assertTrue(decrypted.verified)
         assertTrue(String(decrypted.plaintext, Charsets.UTF_8).contains(marker))
     }
 }

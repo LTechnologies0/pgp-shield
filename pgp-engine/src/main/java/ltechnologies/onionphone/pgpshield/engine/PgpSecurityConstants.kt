@@ -23,9 +23,10 @@ object PgpSecurityConstants {
     const val SECRET_KEY_SIGNATURE_CHECKSUM_HASH_ALGO = HashAlgorithmTags.SHA1
 
     /**
-     * Documented intent for secret-key S2K hash. Live encryptors still use SHA-1
-     * (OpenPGP/S2K common practice via [PgpOperators.secretKeyEncryptor]); keep
-     * this constant in sync if the encryptor switches digests.
+     * Documented fallback for classic Iterated+Salted S2K ([PgpOperators.secretKeyEncryptor]).
+     * New v4/v6 secrets and subkeys default to Argon2+AEAD via
+     * [PgpOperators.aeadSecretKeyEncryptor] (RFC 9580); this SHA-1 constant applies
+     * only to the legacy encryptor path kept for interop / explicit opt-out.
      */
     const val SECRET_KEY_ENCRYPTOR_HASH_ALGO = HashAlgorithmTags.SHA1
 
@@ -35,8 +36,11 @@ object PgpSecurityConstants {
     /**
      * Encoded S2K iteration count (0–255) for secret-key protection.
      *
-     * 255 ≈ 65 011 712 iterations — interoperable with GnuPG/OpenKeychain and
-     * much stronger than BC's default 96 (65 536).
+     * 208 ≈ 8 388 608 SHA-1 iterations. Mobile UX: elliptic-curve pairgen is ~50 ms;
+     * S2K dominated keygen when run 3× sequentially at 255 (~65M). Still ~128× BC's
+     * default 96 (65 536). Applies to **new** keys / passphrase rewraps only.
+     *
+     * RFC 4880 coded count: `(16 + (c & 15)) << ((c >> 4) + 6)`.
      */
-    const val SECRET_KEY_ENCRYPTOR_S2K_COUNT = 255
+    const val SECRET_KEY_ENCRYPTOR_S2K_COUNT = 208
 }

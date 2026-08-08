@@ -43,15 +43,18 @@ import ltechnologies.onionphone.pgpshield.encoding.PaddingEncoder
 import ltechnologies.onionphone.pgpshield.encoding.SymmetricEncoder
 import ltechnologies.onionphone.pgpshield.encoding.ZeroWidthEncoder
 import ltechnologies.onionphone.pgpshield.util.KeyIdParser
+import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicLong
 import javax.inject.Inject
 import javax.inject.Singleton
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.async
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import kotlinx.coroutines.sync.Mutex
 import timber.log.Timber
 
 /**
@@ -80,8 +83,9 @@ class OverlayCoordinator @Inject constructor(
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
     private val paddingEncoder = PaddingEncoder()
     private val symmetricEncoder = SymmetricEncoder()
-    private val actionMutex = Mutex()
-    private var lastActionAtMs = 0L
+    /** Lock-free single-flight: CAS false→true claims the overlay action edge. */
+    private val actionInFlight = AtomicBoolean(false)
+    private val lastActionAtMs = AtomicLong(0L)
     private val minActionGapMs = 350L
     private var service: AccessibilityService? = null
     private var overlayContainer: FrameLayout? = null
@@ -216,14 +220,17 @@ class OverlayCoordinator @Inject constructor(
     }
 
     private suspend fun runOverlayAction(isEncrypt: Boolean, fromAutoSend: Boolean) {
-        if (!actionMutex.tryLock()) {
+        if (!actionInFlight.compareAndSet(false, true)) {
             setStatus("Busy…")
             return
         }
         try {
             val now = SystemClock.elapsedRealtime()
-            if (now - lastActionAtMs < minActionGapMs) return
-            lastActionAtMs = now
+            while (true) {
+                val prev = lastActionAtMs.get()
+                if (now - prev < minActionGapMs) return
+                if (lastActionAtMs.compareAndSet(prev, now)) break
+            }
 
             var target = validTargetOrNull()
             if (target == null) {
@@ -272,7 +279,7 @@ class OverlayCoordinator @Inject constructor(
                 toast(if (isEncrypt) "Overlay encrypted" else "Overlay decrypted")
             }
         } finally {
-            actionMutex.unlock()
+            actionInFlight.set(false)
         }
     }
 
@@ -342,10 +349,17 @@ class OverlayCoordinator @Inject constructor(
             addAll(KeyIdParser.parseCsv(config.recipientKeyIds))
         }.distinct()
         val publicKeys = withContext(Dispatchers.IO) {
-            recipientIds.mapNotNull { keyRepository.getArmoredPublic(it) }
+            coroutineScope {
+                recipientIds.map { id ->
+                    async(Dispatchers.IO) {
+                        if (!keyRepository.isEncryptRecipientAllowed(id)) return@async null
+                        keyRepository.getArmoredPublic(id)
+                    }
+                }.mapNotNull { it.await() }
+            }
         }
         if (publicKeys.isEmpty()) {
-            Timber.w("Overlay GPG: no recipient keys configured")
+            Timber.w("Overlay GPG: no allowed recipient keys configured")
             return null
         }
         return String(

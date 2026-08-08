@@ -7,8 +7,6 @@ package ltechnologies.onionphone.pgpshield.intent
 import android.content.Intent
 import android.net.Uri
 import android.os.Bundle
-import androidx.activity.ComponentActivity
-import androidx.activity.compose.setContent
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -34,11 +32,11 @@ import ltechnologies.onionphone.pgpshield.data.KeyRepository
 import ltechnologies.onionphone.pgpshield.data.SettingsRepository
 import ltechnologies.onionphone.pgpshield.engine.PgpIo
 import ltechnologies.onionphone.pgpshield.ui.components.IntentFlowScaffold
-import ltechnologies.onionphone.pgpshield.ui.theme.PgpShieldTheme
-import ltechnologies.onionphone.pgpshield.util.WindowSecureHelper
 import java.io.File
 import javax.inject.Inject
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
@@ -50,7 +48,7 @@ import kotlinx.coroutines.withContext
  * encrypted files are offered via a multi-share chooser.
  */
 @AndroidEntryPoint
-class EncryptMultipleActivity : ComponentActivity() {
+class EncryptMultipleActivity : LockedIntentActivity() {
     @Inject lateinit var cryptoOperations: CryptoOperations
     @Inject lateinit var keyRepository: KeyRepository
     @Inject lateinit var settingsRepository: SettingsRepository
@@ -58,14 +56,12 @@ class EncryptMultipleActivity : ComponentActivity() {
     /** Builds the multi-encrypt UI and, in integration mode, auto-runs encryption. */
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        WindowSecureHelper.bind(this, settingsRepository)
-        val integrationMode = IntentResultWriter.isCallerIntegration(intent)
+                val integrationMode = IntentResultWriter.isCallerIntegration(intent)
         val count = intent.clipData?.itemCount
             ?: intent.getParcelableArrayListExtra<Uri>(Intent.EXTRA_STREAM)?.size
             ?: intent.data?.let { 1 }
             ?: 0
-        setContent {
-            PgpShieldTheme {
+        setVaultGatedContent(settingsRepository) {
                 var status by remember { mutableStateOf(getString(R.string.intent_status_ready_encrypt_many_fmt, count)) }
                 var error by remember { mutableStateOf<String?>(null) }
                 var busy by remember { mutableStateOf(false) }
@@ -131,7 +127,6 @@ class EncryptMultipleActivity : ComponentActivity() {
                         }
                     }
                 }
-            }
         }
     }
 
@@ -142,16 +137,39 @@ class EncryptMultipleActivity : ComponentActivity() {
         val public = IntentIoHelper.loadEncryptPublicKey(keyRepository, settingsRepository)
         val integrationMode = !sourcePaths.isNullOrEmpty()
 
+        data class Loaded(val index: Int, val name: String, val bytes: ByteArray, val path: String?)
+
+        val loaded = coroutineScope {
+            uris.mapIndexed { index, source ->
+                async(Dispatchers.IO) {
+                    val bytes = contentResolver.openInputStream(source)?.use { PgpIo.readLimited(it) }
+                        ?: return@async null
+                    val name = source.lastPathSegment ?: "file$index.bin"
+                    val path = sourcePaths?.getOrNull(index)
+                    Loaded(index, name, bytes, path)
+                }
+            }.mapNotNull { it.await() }
+        }
+        if (loaded.isEmpty()) error("Could not read any files")
+
+        val results = withContext(Dispatchers.Default) {
+            cryptoOperations.encryptMany(
+                plaintexts = loaded.map {
+                    ltechnologies.onionphone.pgpshield.engine.EncryptPlaintext(
+                        plaintext = it.bytes,
+                        fileName = it.name,
+                        asciiArmor = false,
+                    )
+                },
+                recipientPublicArmored = listOf(public),
+                parallelism = 4,
+            )
+        }
+
         if (integrationMode) {
             var encryptedCount = 0
-            for ((index, source) in uris.withIndex()) {
-                val bytes = withContext(Dispatchers.IO) {
-                    contentResolver.openInputStream(source)?.use { PgpIo.readLimited(it) }
-                } ?: continue
-                val path = sourcePaths.getOrNull(index) ?: continue
-                val encrypted = withContext(Dispatchers.Default) {
-                    cryptoOperations.encrypt(bytes, listOf(public), asciiArmor = false)
-                }
+            loaded.zip(results).forEach { (item, encrypted) ->
+                val path = item.path ?: return@forEach
                 IntentResultWriter.writeEncryptedForCaller(intent, path, encrypted.ciphertext)
                 encryptedCount++
             }
@@ -160,30 +178,18 @@ class EncryptMultipleActivity : ComponentActivity() {
             return
         }
 
-        val outUris = ArrayList<Uri>()
         val dir = File(cacheDir, "shared").also { it.mkdirs() }
-        for ((index, source) in uris.withIndex()) {
-            val bytes = withContext(Dispatchers.IO) {
-                contentResolver.openInputStream(source)?.use { PgpIo.readLimited(it) }
-            } ?: continue
-            val name = source.lastPathSegment ?: "file$index.bin"
-            val encrypted = withContext(Dispatchers.Default) {
-                cryptoOperations.encrypt(bytes, listOf(public), asciiArmor = false)
-            }
-            val out = File(dir, "$name.gpg")
-            withContext(Dispatchers.IO) {
-                out.writeBytes(encrypted.ciphertext)
-            }
-            outUris.add(
-                FileProvider.getUriForFile(
-                    this@EncryptMultipleActivity,
-                    "$packageName.fileprovider",
-                    out,
-                ),
+        val outUris = loaded.zip(results).map { (item, encrypted) ->
+            val out = File(dir, "${item.name}.gpg")
+            out.writeBytes(encrypted.ciphertext)
+            FileProvider.getUriForFile(
+                this@EncryptMultipleActivity,
+                "$packageName.fileprovider",
+                out,
             )
         }
         if (outUris.isEmpty()) error("Could not encrypt any files")
-        shareEncryptedFiles(outUris)
+        shareEncryptedFiles(ArrayList(outUris))
     }
 
     private fun readAllUris(): List<Uri> {

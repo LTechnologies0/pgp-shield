@@ -3,6 +3,10 @@
     xmlns:tools="http://schemas.android.com/tools">
 
     <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.USE_BIOMETRIC" />
+    <uses-permission android:name="android.permission.NFC" />
+    <uses-feature android:name="android.hardware.nfc" android:required="false" />
+    <uses-feature android:name="android.hardware.usb.host" android:required="false" />
 
     <permission
         android:name="ltechnologies.onionphone.pgpshield.permission.API"
@@ -12,7 +16,8 @@
         android:name=".PgpShieldApplication"
         android:allowBackup="false"
         android:allowNativeHeapPointerTagging="true"
-        android:extractNativeLibs="false"
+        android:dataExtractionRules="@xml/data_extraction_rules"
+        android:fullBackupContent="@xml/backup_rules"
         android:gwpAsanMode="always"
         android:icon="@mipmap/ic_launcher"
         android:label="@string/app_name"
@@ -148,17 +153,14 @@
             </intent-filter>
 
             <intent-filter android:label="@string/app_name">
-
                 <action android:name="android.intent.action.VIEW" />
-
                 <category android:name="android.intent.category.DEFAULT" />
-
-                <data android:pathPattern=".*\\.asc" />
-
-                <data android:pathPattern=".*\\.gpg" />
-
-                <data android:pathPattern=".*\\.pgp" />
-
+                <data android:scheme="content" android:host="*" android:pathPattern=".*\\.asc" />
+                <data android:scheme="content" android:host="*" android:pathPattern=".*\\.gpg" />
+                <data android:scheme="content" android:host="*" android:pathPattern=".*\\.pgp" />
+                <data android:scheme="file" android:host="*" android:pathPattern=".*\\.asc" />
+                <data android:scheme="file" android:host="*" android:pathPattern=".*\\.gpg" />
+                <data android:scheme="file" android:host="*" android:pathPattern=".*\\.pgp" />
             </intent-filter>
 
         </activity>

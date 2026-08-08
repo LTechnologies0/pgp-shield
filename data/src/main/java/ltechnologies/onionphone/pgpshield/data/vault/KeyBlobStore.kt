@@ -30,4 +30,10 @@ interface KeyBlobStore {
      * Removes the blob at [path], including any secure-wipe steps the implementation supports.
      */
     fun delete(path: String)
+
+    /**
+     * Restores crash sidecars (e.g. `.rawbak`) if [path] is missing.
+     * @return true if a readable file exists at [path] afterward.
+     */
+    fun ensureBlobPresent(path: String): Boolean = java.io.File(path).isFile
 }

@@ -7,8 +7,6 @@ package ltechnologies.onionphone.pgpshield.intent
 import android.content.Intent
 import android.net.Uri
 import android.os.Bundle
-import androidx.activity.ComponentActivity
-import androidx.activity.compose.setContent
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -33,8 +31,6 @@ import ltechnologies.onionphone.pgpshield.crypto.CryptoOperations
 import ltechnologies.onionphone.pgpshield.data.KeyRepository
 import ltechnologies.onionphone.pgpshield.data.SettingsRepository
 import ltechnologies.onionphone.pgpshield.ui.components.IntentFlowScaffold
-import ltechnologies.onionphone.pgpshield.ui.theme.PgpShieldTheme
-import ltechnologies.onionphone.pgpshield.util.WindowSecureHelper
 import javax.inject.Inject
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -49,7 +45,7 @@ import kotlinx.coroutines.withContext
  * buffers are wiped after use.
  */
 @AndroidEntryPoint
-class DecryptFileActivity : ComponentActivity() {
+class DecryptFileActivity : LockedIntentActivity() {
     @Inject lateinit var cryptoOperations: CryptoOperations
     @Inject lateinit var keyRepository: KeyRepository
     @Inject lateinit var settingsRepository: SettingsRepository
@@ -57,10 +53,8 @@ class DecryptFileActivity : ComponentActivity() {
     /** Builds the decrypt UI and wires up the decrypt/share action. */
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        WindowSecureHelper.bind(this, settingsRepository)
-        val fileName = intent.data?.lastPathSegment ?: getString(R.string.intent_default_encrypted_file)
-        setContent {
-            PgpShieldTheme {
+                val fileName = intent.data?.lastPathSegment ?: getString(R.string.intent_default_encrypted_file)
+        setVaultGatedContent(settingsRepository) {
                 var status by remember { mutableStateOf(getString(R.string.intent_status_ready_decrypt_fmt, fileName)) }
                 var passphrase by remember { mutableStateOf("") }
                 var error by remember { mutableStateOf<String?>(null) }
@@ -138,7 +132,6 @@ class DecryptFileActivity : ComponentActivity() {
                         }
                     }
                 }
-            }
         }
     }
 

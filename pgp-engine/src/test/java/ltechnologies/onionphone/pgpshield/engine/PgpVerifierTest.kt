@@ -8,7 +8,7 @@ class PgpVerifierTest {
     fun cleartextSignRoundTrip_verify() {
         BouncyCastleProviderHolder.ensureRegistered()
         val passphrase = "verify-test-pass".toCharArray()
-        val generated = KeyGenerator().generateKeyRing(
+        val generated = KeyGenerator().generateKeyRingBlocking(
             GenerateKeyRequest(userId = "Verify <v@e.com>", passphrase = passphrase),
         )
         val message = "Signed line\n"

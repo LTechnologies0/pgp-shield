@@ -5,7 +5,7 @@ package ltechnologies.onionphone.pgpshield.engine
  *
  * Routes each [KeyAlgorithmType] and [SubkeyType] to the correct backend:
  * JCA platform crypto for RSA/DSA/ElGamal, BC lightweight for Ed25519/Ed448/X25519/X448
- * and NIST elliptic curves. Also exposes [useBcLightweight] for operator selection.
+ * and NIST/Brainpool elliptic curves. Also exposes [useBcLightweight] for operator selection.
  */
 
 import java.util.Date
@@ -24,24 +24,50 @@ object KeyPairFactory {
     data class Generated(val pair: PGPKeyPair, val useBcLightweight: Boolean)
 
     /** Creates the master signing (certify + sign) key pair for a new key ring. */
-    fun masterSigningPair(type: KeyAlgorithmType, rsaBits: Int, date: Date): Generated = when (type) {
+    fun masterSigningPair(
+        type: KeyAlgorithmType,
+        rsaBits: Int,
+        date: Date,
+        preferNativeCurveTags: Boolean = false,
+    ): Generated = when (type) {
         KeyAlgorithmType.RSA -> Generated(JcaPlatform.rsaSignMasterPair(rsaBits, date), false)
-        KeyAlgorithmType.ED25519 -> BcKeyPairs.ed25519(date).let { Generated(it.pair, true) }
+        KeyAlgorithmType.ED25519 ->
+            if (preferNativeCurveTags) BcKeyPairs.ed25519Native(date).let { Generated(it.pair, true) }
+            else BcKeyPairs.ed25519(date).let { Generated(it.pair, true) }
         KeyAlgorithmType.ED448 -> BcKeyPairs.ed448(date).let { Generated(it.pair, true) }
         KeyAlgorithmType.ECDSA_P256 -> Generated(BcEcKeyPairs.ecdsa(EccCurve.P256, date), true)
         KeyAlgorithmType.ECDSA_P384 -> Generated(BcEcKeyPairs.ecdsa(EccCurve.P384, date), true)
         KeyAlgorithmType.ECDSA_P521 -> Generated(BcEcKeyPairs.ecdsa(EccCurve.P521, date), true)
+        KeyAlgorithmType.ECDSA_BRAINPOOL_P256R1 ->
+            Generated(BcEcKeyPairs.ecdsa(EccCurve.BRAINPOOL_P256R1, date), true)
+        KeyAlgorithmType.ECDSA_BRAINPOOL_P384R1 ->
+            Generated(BcEcKeyPairs.ecdsa(EccCurve.BRAINPOOL_P384R1, date), true)
+        KeyAlgorithmType.ECDSA_BRAINPOOL_P512R1 ->
+            Generated(BcEcKeyPairs.ecdsa(EccCurve.BRAINPOOL_P512R1, date), true)
         KeyAlgorithmType.DSA_ELGAMAL -> Generated(JcaPlatform.dsaKeyPair(PgpAlgorithmPolicy.defaultDsaBits, date), false)
     }
 
     /** Creates the encryption subkey pair paired with the given primary algorithm type. */
-    fun encryptionSubkeyPair(type: KeyAlgorithmType, rsaBits: Int, date: Date): Generated = when (type) {
+    fun encryptionSubkeyPair(
+        type: KeyAlgorithmType,
+        rsaBits: Int,
+        date: Date,
+        preferNativeCurveTags: Boolean = false,
+    ): Generated = when (type) {
         KeyAlgorithmType.RSA -> Generated(JcaPlatform.rsaEncryptSubPair(rsaBits, date), false)
-        KeyAlgorithmType.ED25519 -> BcKeyPairs.x25519(date).let { Generated(it.pair, true) }
+        KeyAlgorithmType.ED25519 ->
+            if (preferNativeCurveTags) BcKeyPairs.x25519Native(date).let { Generated(it.pair, true) }
+            else BcKeyPairs.x25519(date).let { Generated(it.pair, true) }
         KeyAlgorithmType.ED448 -> BcKeyPairs.x448(date).let { Generated(it.pair, true) }
         KeyAlgorithmType.ECDSA_P256 -> Generated(BcEcKeyPairs.ecdh(EccCurve.P256, date), true)
         KeyAlgorithmType.ECDSA_P384 -> Generated(BcEcKeyPairs.ecdh(EccCurve.P384, date), true)
         KeyAlgorithmType.ECDSA_P521 -> Generated(BcEcKeyPairs.ecdh(EccCurve.P521, date), true)
+        KeyAlgorithmType.ECDSA_BRAINPOOL_P256R1 ->
+            Generated(BcEcKeyPairs.ecdh(EccCurve.BRAINPOOL_P256R1, date), true)
+        KeyAlgorithmType.ECDSA_BRAINPOOL_P384R1 ->
+            Generated(BcEcKeyPairs.ecdh(EccCurve.BRAINPOOL_P384R1, date), true)
+        KeyAlgorithmType.ECDSA_BRAINPOOL_P512R1 ->
+            Generated(BcEcKeyPairs.ecdh(EccCurve.BRAINPOOL_P512R1, date), true)
         KeyAlgorithmType.DSA_ELGAMAL -> Generated(
             JcaPlatform.elGamalKeyPair(PgpAlgorithmPolicy.defaultElGamalBits, date),
             false,
@@ -51,13 +77,26 @@ object KeyPairFactory {
     /**
      * Creates an authentication subkey (sign-capable material with authentication flag only).
      */
-    fun authenticationSubkeyPair(type: KeyAlgorithmType, rsaBits: Int, date: Date): Generated = when (type) {
+    fun authenticationSubkeyPair(
+        type: KeyAlgorithmType,
+        rsaBits: Int,
+        date: Date,
+        preferNativeCurveTags: Boolean = false,
+    ): Generated = when (type) {
         KeyAlgorithmType.RSA -> Generated(JcaPlatform.rsaSignMasterPair(rsaBits, date), false)
-        KeyAlgorithmType.ED25519 -> BcKeyPairs.ed25519(date).let { Generated(it.pair, true) }
+        KeyAlgorithmType.ED25519 ->
+            if (preferNativeCurveTags) BcKeyPairs.ed25519Native(date).let { Generated(it.pair, true) }
+            else BcKeyPairs.ed25519(date).let { Generated(it.pair, true) }
         KeyAlgorithmType.ED448 -> BcKeyPairs.ed448(date).let { Generated(it.pair, true) }
         KeyAlgorithmType.ECDSA_P256 -> Generated(BcEcKeyPairs.ecdsa(EccCurve.P256, date), true)
         KeyAlgorithmType.ECDSA_P384 -> Generated(BcEcKeyPairs.ecdsa(EccCurve.P384, date), true)
         KeyAlgorithmType.ECDSA_P521 -> Generated(BcEcKeyPairs.ecdsa(EccCurve.P521, date), true)
+        KeyAlgorithmType.ECDSA_BRAINPOOL_P256R1 ->
+            Generated(BcEcKeyPairs.ecdsa(EccCurve.BRAINPOOL_P256R1, date), true)
+        KeyAlgorithmType.ECDSA_BRAINPOOL_P384R1 ->
+            Generated(BcEcKeyPairs.ecdsa(EccCurve.BRAINPOOL_P384R1, date), true)
+        KeyAlgorithmType.ECDSA_BRAINPOOL_P512R1 ->
+            Generated(BcEcKeyPairs.ecdsa(EccCurve.BRAINPOOL_P512R1, date), true)
         KeyAlgorithmType.DSA_ELGAMAL -> Generated(JcaPlatform.dsaKeyPair(PgpAlgorithmPolicy.defaultDsaBits, date), false)
     }
 
@@ -70,9 +109,21 @@ object KeyPairFactory {
         SubkeyType.ENCRYPT_ECDH_P256 -> Generated(BcEcKeyPairs.ecdh(EccCurve.P256, date), true)
         SubkeyType.ENCRYPT_ECDH_P384 -> Generated(BcEcKeyPairs.ecdh(EccCurve.P384, date), true)
         SubkeyType.ENCRYPT_ECDH_P521 -> Generated(BcEcKeyPairs.ecdh(EccCurve.P521, date), true)
+        SubkeyType.ENCRYPT_ECDH_BRAINPOOL_P256R1 ->
+            Generated(BcEcKeyPairs.ecdh(EccCurve.BRAINPOOL_P256R1, date), true)
+        SubkeyType.ENCRYPT_ECDH_BRAINPOOL_P384R1 ->
+            Generated(BcEcKeyPairs.ecdh(EccCurve.BRAINPOOL_P384R1, date), true)
+        SubkeyType.ENCRYPT_ECDH_BRAINPOOL_P512R1 ->
+            Generated(BcEcKeyPairs.ecdh(EccCurve.BRAINPOOL_P512R1, date), true)
         SubkeyType.SIGN_ECDSA_P256 -> Generated(BcEcKeyPairs.ecdsa(EccCurve.P256, date), true)
         SubkeyType.SIGN_ECDSA_P384 -> Generated(BcEcKeyPairs.ecdsa(EccCurve.P384, date), true)
         SubkeyType.SIGN_ECDSA_P521 -> Generated(BcEcKeyPairs.ecdsa(EccCurve.P521, date), true)
+        SubkeyType.SIGN_ECDSA_BRAINPOOL_P256R1 ->
+            Generated(BcEcKeyPairs.ecdsa(EccCurve.BRAINPOOL_P256R1, date), true)
+        SubkeyType.SIGN_ECDSA_BRAINPOOL_P384R1 ->
+            Generated(BcEcKeyPairs.ecdsa(EccCurve.BRAINPOOL_P384R1, date), true)
+        SubkeyType.SIGN_ECDSA_BRAINPOOL_P512R1 ->
+            Generated(BcEcKeyPairs.ecdsa(EccCurve.BRAINPOOL_P512R1, date), true)
         SubkeyType.SIGN_ED25519 -> BcKeyPairs.ed25519(date).let { Generated(it.pair, true) }
         SubkeyType.SIGN_ED448 -> BcKeyPairs.ed448(date).let { Generated(it.pair, true) }
         SubkeyType.ENCRYPT_ELGAMAL -> Generated(
@@ -85,6 +136,12 @@ object KeyPairFactory {
         SubkeyType.AUTH_ECDSA_P256 -> Generated(BcEcKeyPairs.ecdsa(EccCurve.P256, date), true)
         SubkeyType.AUTH_ECDSA_P384 -> Generated(BcEcKeyPairs.ecdsa(EccCurve.P384, date), true)
         SubkeyType.AUTH_ECDSA_P521 -> Generated(BcEcKeyPairs.ecdsa(EccCurve.P521, date), true)
+        SubkeyType.AUTH_ECDSA_BRAINPOOL_P256R1 ->
+            Generated(BcEcKeyPairs.ecdsa(EccCurve.BRAINPOOL_P256R1, date), true)
+        SubkeyType.AUTH_ECDSA_BRAINPOOL_P384R1 ->
+            Generated(BcEcKeyPairs.ecdsa(EccCurve.BRAINPOOL_P384R1, date), true)
+        SubkeyType.AUTH_ECDSA_BRAINPOOL_P512R1 ->
+            Generated(BcEcKeyPairs.ecdsa(EccCurve.BRAINPOOL_P512R1, date), true)
     }
 
     /**
@@ -120,9 +177,15 @@ enum class SubkeyType {
     ENCRYPT_ECDH_P256,
     ENCRYPT_ECDH_P384,
     ENCRYPT_ECDH_P521,
+    ENCRYPT_ECDH_BRAINPOOL_P256R1,
+    ENCRYPT_ECDH_BRAINPOOL_P384R1,
+    ENCRYPT_ECDH_BRAINPOOL_P512R1,
     SIGN_ECDSA_P256,
     SIGN_ECDSA_P384,
     SIGN_ECDSA_P521,
+    SIGN_ECDSA_BRAINPOOL_P256R1,
+    SIGN_ECDSA_BRAINPOOL_P384R1,
+    SIGN_ECDSA_BRAINPOOL_P512R1,
     SIGN_ED25519,
     SIGN_ED448,
     ENCRYPT_ELGAMAL,
@@ -132,4 +195,7 @@ enum class SubkeyType {
     AUTH_ECDSA_P256,
     AUTH_ECDSA_P384,
     AUTH_ECDSA_P521,
+    AUTH_ECDSA_BRAINPOOL_P256R1,
+    AUTH_ECDSA_BRAINPOOL_P384R1,
+    AUTH_ECDSA_BRAINPOOL_P512R1,
 }

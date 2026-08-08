@@ -6,8 +6,6 @@ package ltechnologies.onionphone.pgpshield.intent
 
 import android.content.Intent
 import android.os.Bundle
-import androidx.activity.ComponentActivity
-import androidx.activity.compose.setContent
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -33,11 +31,8 @@ import ltechnologies.onionphone.pgpshield.crypto.CryptoOperations
 import ltechnologies.onionphone.pgpshield.data.KeyRepository
 import ltechnologies.onionphone.pgpshield.data.SettingsRepository
 import ltechnologies.onionphone.pgpshield.ui.components.IntentFlowScaffold
-import ltechnologies.onionphone.pgpshield.ui.theme.PgpShieldTheme
-import ltechnologies.onionphone.pgpshield.util.WindowSecureHelper
 import javax.inject.Inject
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
@@ -49,7 +44,7 @@ import kotlinx.coroutines.withContext
  * armored ciphertext.
  */
 @AndroidEntryPoint
-class EncryptTextActivity : ComponentActivity() {
+class EncryptTextActivity : LockedIntentActivity() {
     @Inject lateinit var cryptoOperations: CryptoOperations
     @Inject lateinit var keyRepository: KeyRepository
     @Inject lateinit var settingsRepository: SettingsRepository
@@ -57,9 +52,7 @@ class EncryptTextActivity : ComponentActivity() {
     /** Builds the encrypt-text UI and wires up the encrypt/share action. */
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        WindowSecureHelper.bind(this, settingsRepository)
-        setContent {
-            PgpShieldTheme {
+        setVaultGatedContent(settingsRepository) {
                 var plaintext by remember { mutableStateOf("") }
                 LaunchedEffect(Unit) {
                     plaintext = IntentIoHelper.readText(intent, this@EncryptTextActivity).orEmpty()
@@ -94,11 +87,7 @@ class EncryptTextActivity : ComponentActivity() {
                                 scope.launch {
                                     try {
                                         val public = withContext(Dispatchers.IO) {
-                                            val settings = settingsRepository.current()
-                                            val allKeys = keyRepository.observeKeys().first()
-                                            val keyId = settings.defaultEncryptKeyId ?: allKeys.firstOrNull()?.masterKeyId
-                                            keyId?.let { keyRepository.getArmoredPublic(it) }
-                                                ?: error("No recipient key — set default in Settings or import a public key")
+                                            IntentIoHelper.loadEncryptPublicKey(keyRepository, settingsRepository)
                                         }
                                         val result = withContext(Dispatchers.Default) {
                                             cryptoOperations.encrypt(plaintext.toByteArray(Charsets.UTF_8), listOf(public))
@@ -136,7 +125,6 @@ class EncryptTextActivity : ComponentActivity() {
                         }
                     }
                 }
-            }
         }
     }
 

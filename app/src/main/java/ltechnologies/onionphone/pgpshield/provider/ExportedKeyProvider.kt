@@ -16,6 +16,7 @@ import android.net.Uri
 import android.provider.BaseColumns
 import dagger.hilt.android.EntryPointAccessors
 import ltechnologies.onionphone.pgpshield.PgpShieldApplication
+import ltechnologies.onionphone.pgpshield.data.KeyRepository
 import ltechnologies.onionphone.pgpshield.data.db.UserIdDao
 import ltechnologies.onionphone.pgpshield.di.ProviderEntryPoint
 import kotlinx.coroutines.Dispatchers
@@ -23,20 +24,22 @@ import kotlinx.coroutines.runBlocking
 
 /**
  * OpenKeychain-compatible exported key query provider (email_status).
- * ponytail: verification status not tracked yet — all keys reported as unverified.
+ * Maps local owner-trust (full=2) to VERIFIED; other levels to UNVERIFIED.
  */
 class ExportedKeyProvider : ContentProvider() {
     private lateinit var userIdDao: UserIdDao
+    private lateinit var keyRepository: KeyRepository
     private val matcher = UriMatcher(UriMatcher.NO_MATCH).apply {
         addURI(AUTHORITY, PATH_EMAIL_STATUS, MATCH_EMAIL_STATUS)
         addURI(AUTHORITY, "$PATH_EMAIL_STATUS/*", MATCH_EMAIL_STATUS)
     }
 
-    /** Resolves the [UserIdDao] from the Hilt graph via an entry point. */
+    /** Resolves DAOs from the Hilt graph via an entry point. */
     override fun onCreate(): Boolean {
         val app = context?.applicationContext as? PgpShieldApplication ?: return false
         val entryPoint = EntryPointAccessors.fromApplication(app, ProviderEntryPoint::class.java)
         userIdDao = entryPoint.userIdDao()
+        keyRepository = entryPoint.keyRepository()
         return true
     }
 
@@ -57,12 +60,22 @@ class ExportedKeyProvider : ContentProvider() {
             if (emails.isEmpty()) {
                 emptyList()
             } else {
+                val keysById = keyRepository.search("").associateBy { it.masterKeyId }
                 emails.flatMap { email ->
-                    userIdDao.findByUserIdFragment(email).map { entity ->
+                    userIdDao.findByUserIdFragment(email).mapNotNull { entity ->
+                        val summary = keysById[entity.masterKeyId] ?: return@mapNotNull null
+                        // Never advertise revoked or Never-trusted keys to third-party apps.
+                        if (summary.isRevoked || summary.trustLevel == TRUST_NEVER) {
+                            return@mapNotNull null
+                        }
                         Row(
                             emailAddress = email,
                             userId = entity.userId,
-                            status = KEY_STATUS_UNVERIFIED,
+                            status = if (summary.trustLevel == TRUST_FULL) {
+                                KEY_STATUS_VERIFIED
+                            } else {
+                                KEY_STATUS_UNVERIFIED
+                            },
                             masterKeyId = entity.masterKeyId,
                         )
                     }
@@ -118,6 +131,12 @@ class ExportedKeyProvider : ContentProvider() {
 
         const val KEY_STATUS_UNVERIFIED = 1
         const val KEY_STATUS_VERIFIED = 2
+
+        /** Matches [KeySummary.trustLevel] full trust. */
+        private const val TRUST_FULL = 2
+
+        /** Matches [KeySummary.TRUST_NEVER]. */
+        private const val TRUST_NEVER = 3
 
         const val COLUMN_EMAIL_ADDRESS = "email_address"
         const val COLUMN_USER_ID = "user_id"

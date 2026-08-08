@@ -22,7 +22,6 @@ import org.bouncycastle.openpgp.PGPSignature
 import org.bouncycastle.openpgp.PGPSignatureGenerator
 import org.bouncycastle.openpgp.PGPSignatureSubpacketGenerator
 import org.bouncycastle.openpgp.PGPUtil
-import org.bouncycastle.openpgp.operator.jcajce.JcaKeyFingerprintCalculator
 
 /**
  * Parameters for a user ID edit operation on a secret key ring.
@@ -39,8 +38,6 @@ data class UserIdEditRequest(
 
 /** Adds, revokes, and reorders user IDs on OpenPGP master keys. */
 class UserIdManager {
-    private val fingerprintCalculator = JcaKeyFingerprintCalculator()
-
     init {
         BouncyCastleProviderHolder.ensureRegistered()
     }
@@ -192,7 +189,7 @@ class UserIdManager {
 
     private fun loadSecretRing(armored: ByteArray): PGPSecretKeyRing =
         PGPUtil.getDecoderStream(ByteArrayInputStream(armored)).use { input ->
-            PGPObjectFactory(input, fingerprintCalculator).nextObject() as PGPSecretKeyRing
+            PGPObjectFactory(input, PgpFingerprints.calculator).nextObject() as PGPSecretKeyRing
         }
 
     private fun replaceMasterSecretKey(ring: PGPSecretKeyRing, newMaster: PGPSecretKey): PGPSecretKeyRing {

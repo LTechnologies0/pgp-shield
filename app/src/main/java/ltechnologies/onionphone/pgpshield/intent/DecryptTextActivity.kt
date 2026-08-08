@@ -6,8 +6,6 @@ package ltechnologies.onionphone.pgpshield.intent
 
 import android.content.Intent
 import android.os.Bundle
-import androidx.activity.ComponentActivity
-import androidx.activity.compose.setContent
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -35,8 +33,6 @@ import ltechnologies.onionphone.pgpshield.crypto.CryptoOperations
 import ltechnologies.onionphone.pgpshield.data.KeyRepository
 import ltechnologies.onionphone.pgpshield.data.SettingsRepository
 import ltechnologies.onionphone.pgpshield.ui.components.IntentFlowScaffold
-import ltechnologies.onionphone.pgpshield.ui.theme.PgpShieldTheme
-import ltechnologies.onionphone.pgpshield.util.WindowSecureHelper
 import javax.inject.Inject
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -50,7 +46,7 @@ import kotlinx.coroutines.withContext
  * plaintext. Passphrase buffers are wiped after each attempt.
  */
 @AndroidEntryPoint
-class DecryptTextActivity : ComponentActivity() {
+class DecryptTextActivity : LockedIntentActivity() {
     @Inject lateinit var cryptoOperations: CryptoOperations
     @Inject lateinit var keyRepository: KeyRepository
     @Inject lateinit var settingsRepository: SettingsRepository
@@ -58,9 +54,7 @@ class DecryptTextActivity : ComponentActivity() {
     /** Builds the decrypt-text UI and wires up the decrypt/share action. */
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        WindowSecureHelper.bind(this, settingsRepository)
-        setContent {
-            PgpShieldTheme {
+        setVaultGatedContent(settingsRepository) {
                 var ciphertext by remember { mutableStateOf("") }
                 LaunchedEffect(Unit) {
                     ciphertext = IntentIoHelper.readText(intent, this@DecryptTextActivity).orEmpty()
@@ -158,7 +152,6 @@ class DecryptTextActivity : ComponentActivity() {
                         }
                     }
                 }
-            }
         }
     }
 }

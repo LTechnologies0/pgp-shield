@@ -19,6 +19,13 @@ import org.json.JSONObject
 @Singleton
 class KeyserverClient @Inject constructor() {
     /**
+     * When true, allows `http://127.0.0.1` / `localhost` for unit tests with [FakeKeyserver].
+     * Production code must leave this false.
+     */
+    @Volatile
+    var allowLoopbackCleartextForTests: Boolean = false
+
+    /**
      * Fetches an armored public key from [baseUrl] matching [query].
      *
      * @param baseUrl Keyserver base URL (e.g. `https://keys.openpgp.org`).
@@ -30,10 +37,10 @@ class KeyserverClient @Inject constructor() {
     fun fetchKey(baseUrl: String, query: String): ByteArray {
         val trimmed = query.trim()
         require(trimmed.isNotEmpty()) { "Empty search query" }
-        val url = buildLookupUrl(baseUrl.trimEnd('/'), trimmed)
-        val conn = openConnection(url, method = "GET").apply {
-            setRequestProperty("Accept", "application/pgp-keys, application/octet-stream, */*")
-        }
+        val base = baseUrl.trimEnd('/')
+        assertAllowedBaseUrl(base)
+        val url = buildLookupUrl(base, trimmed)
+        val conn = openGetFollowingHttpsRedirects(url)
         try {
             return readArmoredKey(conn)
         } finally {
@@ -56,6 +63,7 @@ class KeyserverClient @Inject constructor() {
         val armored = String(armoredPublic, Charsets.UTF_8).trim()
         require(armored.contains("BEGIN PGP PUBLIC")) { "Not armored public key material" }
         val base = baseUrl.trimEnd('/')
+        assertAllowedBaseUrl(base)
         runCatching { uploadViaVks(base, armored) }
             .onSuccess { return }
             .onFailure { vksError ->
@@ -98,7 +106,7 @@ class KeyserverClient @Inject constructor() {
 
     private fun uploadViaHkp(base: String, armored: String) {
         val url = "$base/pks/add"
-        val body = "keytext=${URLEncoder.encode(armored, Charsets.UTF_8)}"
+        val body = "keytext=${URLEncoder.encode(armored, "UTF-8")}"
         val conn = openConnection(url, method = "POST").apply {
             doOutput = true
             setRequestProperty("Content-Type", "application/x-www-form-urlencoded; charset=utf-8")
@@ -135,12 +143,53 @@ class KeyserverClient @Inject constructor() {
         return body
     }
 
-    private fun openConnection(url: String, method: String): HttpURLConnection =
-        (URI(url).toURL().openConnection() as HttpURLConnection).apply {
+    private fun assertAllowedBaseUrl(base: String) {
+        if (base.startsWith("https://", ignoreCase = true)) return
+        if (allowLoopbackCleartextForTests && isLoopbackHttp(base)) return
+        throw IllegalArgumentException("Keyserver requires HTTPS")
+    }
+
+    private fun isLoopbackHttp(url: String): Boolean {
+        val uri = runCatching { URI(url) }.getOrNull() ?: return false
+        if (uri.scheme?.equals("http", ignoreCase = true) != true) return false
+        val host = uri.host ?: return false
+        return host == "127.0.0.1" ||
+            host.equals("localhost", ignoreCase = true) ||
+            host == "[::1]" ||
+            host == "::1"
+    }
+
+    private fun openConnection(url: String, method: String): HttpURLConnection {
+        assertAllowedBaseUrl(url)
+        return (URI(url).toURL().openConnection() as HttpURLConnection).apply {
             connectTimeout = TIMEOUT_MS
             readTimeout = TIMEOUT_MS
             requestMethod = method
+            // Follow HTTPS redirects manually so Location cannot downgrade to cleartext.
+            instanceFollowRedirects = false
         }
+    }
+
+    private fun openGetFollowingHttpsRedirects(url: String, redirectDepth: Int = 0): HttpURLConnection {
+        require(redirectDepth <= 3) { "Keyserver too many redirects" }
+        val conn = openConnection(url, method = "GET").apply {
+            setRequestProperty("Accept", "application/pgp-keys, application/octet-stream, */*")
+        }
+        val code = conn.responseCode
+        if (code in 300..399) {
+            val location = conn.getHeaderField("Location")
+                ?: throw PgpException("Keyserver redirect without Location for $url")
+            conn.disconnect()
+            val next = URI(url).resolve(location).toString()
+            if (!next.startsWith("https://", ignoreCase = true) &&
+                !(allowLoopbackCleartextForTests && isLoopbackHttp(next))
+            ) {
+                throw PgpException("Keyserver refused non-HTTPS redirect to $next")
+            }
+            return openGetFollowingHttpsRedirects(next, redirectDepth + 1)
+        }
+        return conn
+    }
 
     private fun readResponseBody(conn: HttpURLConnection, code: Int): String =
         (if (code in 200..299) conn.inputStream else conn.errorStream)
@@ -207,7 +256,7 @@ class KeyserverClient @Inject constructor() {
             val trimmed = query.trim()
             return when {
                 trimmed.contains('@') ->
-                    "$base/vks/v1/by-email/${URLEncoder.encode(trimmed, Charsets.UTF_8)}"
+                    "$base/vks/v1/by-email/${URLEncoder.encode(trimmed, "UTF-8")}"
                 else -> {
                     val compact = trimmed.replace(" ", "")
                     val fp = normalizeFingerprint(compact)
@@ -219,11 +268,11 @@ class KeyserverClient @Inject constructor() {
                         return "$base/vks/v1/by-keyid/$keyId"
                     }
                     val hkpSearch = if (compact.contains('@')) {
-                        URLEncoder.encode(trimmed, Charsets.UTF_8)
+                        URLEncoder.encode(trimmed, "UTF-8")
                     } else {
                         URLEncoder.encode(
                             runCatching { normalizeKeyIdHex(compact) }.getOrDefault(compact.uppercase()),
-                            Charsets.UTF_8,
+                            "UTF-8",
                         )
                     }
                     "$base/pks/lookup?op=get&options=mr&search=$hkpSearch"

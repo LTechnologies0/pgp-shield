@@ -28,6 +28,10 @@ data class SubkeyInfo(
     val expirationTime: Instant?,
     val isRevoked: Boolean,
     val flags: Int,
+    /** Reported key strength in bits (RSA modulus, ECC field, etc.), or 0 if unknown. */
+    val bitStrength: Int = 0,
+    /** ASN.1 curve OID for classic ECDSA/ECDH/EC keys, or null when not applicable. */
+    val curveOid: String? = null,
 )
 
 /**

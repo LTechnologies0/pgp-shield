@@ -20,6 +20,7 @@ import androidx.compose.material3.adaptive.navigationsuite.NavigationSuiteScaffo
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -43,6 +44,7 @@ import ltechnologies.onionphone.pgpshield.ui.keys.ImportKeyScreen
 import ltechnologies.onionphone.pgpshield.ui.keys.KeyDetailScreen
 import ltechnologies.onionphone.pgpshield.ui.keys.KeyListScreen
 import ltechnologies.onionphone.pgpshield.ui.keys.KeySearchScreen
+import ltechnologies.onionphone.pgpshield.ui.autocrypt.AutocryptPeersScreen
 import ltechnologies.onionphone.pgpshield.ui.qr.QrKeyScreen
 import ltechnologies.onionphone.pgpshield.ui.settings.SettingsScreen
 import ltechnologies.onionphone.pgpshield.ui.smartcard.SmartCardScreen
@@ -58,6 +60,7 @@ object Routes {
     const val SETTINGS = "settings"
     const val QR_KEY = "qr_key"
     const val SMART_CARD = "smart_card"
+    const val AUTOCRYPT = "autocrypt"
 
     /** Builds the key-detail route for [keyId], encoding it for safe URL use. */
     fun keyDetail(keyId: Long) = "key_detail/${KeyNavIds.encode(keyId)}"
@@ -122,8 +125,10 @@ fun PgpShieldNavHost() {
                     composable(Routes.CREATE_KEY) {
                         CreateKeyScreen(onBack = { keysNav.popBackStack() })
                     }
-                    composable(Routes.IMPORT_KEY) {
-                        val homeEntry = keysNav.getBackStackEntry(Routes.HOME)
+                    composable(Routes.IMPORT_KEY) { backStackEntry ->
+                        val homeEntry = remember(backStackEntry) {
+                            keysNav.getBackStackEntry(Routes.HOME)
+                        }
                         val listViewModel: KeyListViewModel = hiltViewModel(homeEntry)
                         ImportKeyScreen(
                             onBack = { keysNav.popBackStack() },
@@ -137,7 +142,9 @@ fun PgpShieldNavHost() {
                         route = Routes.KEY_DETAIL,
                         arguments = listOf(navArgument("keyIdHex") { type = NavType.StringType }),
                     ) { entry ->
-                        val homeEntry = keysNav.getBackStackEntry(Routes.HOME)
+                        val homeEntry = remember(entry) {
+                            keysNav.getBackStackEntry(Routes.HOME)
+                        }
                         val listViewModel: KeyListViewModel = hiltViewModel(homeEntry)
                         KeyDetailScreen(
                             keyId = KeyNavIds.decode(entry.arguments?.getString("keyIdHex")),
@@ -161,6 +168,7 @@ fun PgpShieldNavHost() {
                             onBack = { /* main tab */ },
                             onOpenQrKeys = { settingsNav.navigate(Routes.QR_KEY) },
                             onOpenSmartCard = { settingsNav.navigate(Routes.SMART_CARD) },
+                            onOpenAutocrypt = { settingsNav.navigate(Routes.AUTOCRYPT) },
                             showBack = false,
                             isActive = mainTab == MainTab.Settings,
                         )
@@ -170,6 +178,17 @@ fun PgpShieldNavHost() {
                     }
                     composable(Routes.SMART_CARD) {
                         SmartCardScreen(onBack = { settingsNav.popBackStack() })
+                    }
+                    composable(Routes.AUTOCRYPT) {
+                        AutocryptPeersScreen(
+                            onBack = { settingsNav.popBackStack() },
+                            onOpenKey = { keyId ->
+                                mainTab = MainTab.Keys
+                                keysNav.navigate(Routes.keyDetail(keyId)) {
+                                    launchSingleTop = true
+                                }
+                            },
+                        )
                     }
                 }
             }

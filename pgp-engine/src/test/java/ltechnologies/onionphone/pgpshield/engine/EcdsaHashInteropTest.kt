@@ -38,6 +38,24 @@ class EcdsaHashInteropTest {
     }
 
     @Test
+    fun brainpoolP256r1_selfSignaturesUseSha256() {
+        val armored = generatePublicArmored(
+            KeyAlgorithmType.ECDSA_BRAINPOOL_P256R1,
+            "BP256 <bp256@example.com>",
+        )
+        assertSignatureDigests(armored, HashAlgorithmTags.SHA256)
+    }
+
+    @Test
+    fun brainpoolP512r1_selfSignaturesUseSha512() {
+        val armored = generatePublicArmored(
+            KeyAlgorithmType.ECDSA_BRAINPOOL_P512R1,
+            "BP512 <bp512@example.com>",
+        )
+        assertSignatureDigests(armored, HashAlgorithmTags.SHA512)
+    }
+
+    @Test
     @EnabledIf("gpgAvailable")
     fun p521_publicKeyImportsIntoGnuPg() {
         val armored = generatePublicArmored(KeyAlgorithmType.ECDSA_P521, "GpgP521 <gpg-p521@example.com>")
@@ -98,7 +116,7 @@ class EcdsaHashInteropTest {
         BouncyCastleProviderHolder.ensureRegistered()
         val passphrase = "interop-pass-$type".toCharArray()
         return try {
-            KeyGenerator().generateKeyRing(
+            KeyGenerator().generateKeyRingBlocking(
                 GenerateKeyRequest(
                     userId = userId,
                     passphrase = passphrase,

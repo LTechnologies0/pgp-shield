@@ -20,6 +20,7 @@ import ltechnologies.onionphone.pgpshield.data.KeyRepository
 import ltechnologies.onionphone.pgpshield.data.SettingsRepository
 import ltechnologies.onionphone.pgpshield.data.db.PaddingTemplateDao
 import ltechnologies.onionphone.pgpshield.data.db.PaddingTemplateEntity
+import ltechnologies.onionphone.pgpshield.data.vault.EncryptedBlobStore
 import ltechnologies.onionphone.pgpshield.engine.BouncyCastleProviderHolder
 import ltechnologies.onionphone.pgpshield.overlay.OverlayPassphraseSession
 import ltechnologies.onionphone.pgpshield.security.AppLockManager
@@ -44,6 +45,9 @@ class PgpShieldApplication : Application() {
     @Inject lateinit var keyRepository: KeyRepository
     @Inject lateinit var overlayPassphraseSession: OverlayPassphraseSession
     @Inject lateinit var appLockManager: AppLockManager
+    @Inject lateinit var encryptedBlobStore: EncryptedBlobStore
+    @Inject lateinit var hardwarePassphraseVault: ltechnologies.onionphone.pgpshield.data.security.HardwarePassphraseVault
+    @Inject lateinit var smimeCertificateStore: ltechnologies.onionphone.pgpshield.data.SmimeCertificateStore
 
     private val appScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val screenOffReceiver = object : BroadcastReceiver() {
@@ -77,6 +81,11 @@ class PgpShieldApplication : Application() {
         installCrashHandler()
         BouncyCastleProviderHolder.ensureRegistered()
         appScope.launch {
+            runCatching { encryptedBlobStore.warmKeyset() }
+                .onFailure { Timber.w(it, "Vault keyset warm-up deferred") }
+            runCatching { hardwarePassphraseVault.ensureWrappingKey() }
+                .onFailure { Timber.w(it, "Hardware passphrase StrongBox warm-up deferred") }
+            smimeCertificateStore.warmStrongBoxKey()
             paddingTemplateDao.insert(
                 PaddingTemplateEntity(
                     templateId = "default",

@@ -10,6 +10,8 @@ import dagger.hilt.components.SingletonComponent
 import ltechnologies.onionphone.pgpshield.crypto.CryptoOperations
 import ltechnologies.onionphone.pgpshield.data.KeyRepository
 import ltechnologies.onionphone.pgpshield.data.db.UserIdDao
+import ltechnologies.onionphone.pgpshield.data.vault.KeyBlobStore
+import ltechnologies.onionphone.pgpshield.security.AppLockManager
 
 /**
  * Exposes singleton dependencies to non-injected classes such as
@@ -26,4 +28,10 @@ interface ProviderEntryPoint {
 
     /** Provides the cryptographic operations facade. */
     fun cryptoOperations(): CryptoOperations
+
+    /** Encrypted vault blob store (device tests / providers). */
+    fun keyBlobStore(): KeyBlobStore
+
+    /** App lock gate for vault access (device tests). */
+    fun appLockManager(): AppLockManager
 }

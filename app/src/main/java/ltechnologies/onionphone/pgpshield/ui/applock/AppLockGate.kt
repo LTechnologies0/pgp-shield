@@ -35,11 +35,13 @@ import ltechnologies.onionphone.pgpshield.security.AppLockAuthResult
 import ltechnologies.onionphone.pgpshield.security.AppLockAuthenticator
 import ltechnologies.onionphone.pgpshield.security.AppLockManager
 import ltechnologies.onionphone.pgpshield.security.AppLockState
+import ltechnologies.onionphone.pgpshield.security.FidoAppLockManager
 
 @Composable
 fun AppLockGate(
     appLockManager: AppLockManager,
     authenticator: AppLockAuthenticator,
+    fidoAppLockManager: FidoAppLockManager? = null,
     unlockedContent: @Composable () -> Unit,
 ) {
     val lockState by appLockManager.state.collectAsStateWithLifecycle()
@@ -49,6 +51,8 @@ fun AppLockGate(
         )
         AppLockState.LOCKED -> AppLockScreen(
             authenticator = authenticator,
+            fidoRequired = fidoAppLockManager?.requiresSecurityKey() == true,
+            fidoLabel = fidoAppLockManager?.current()?.credentialLabel,
             onSuccess = { appLockManager.markUnlocked() },
         )
         AppLockState.UNLOCKED -> unlockedContent()
@@ -58,12 +62,15 @@ fun AppLockGate(
 @Composable
 private fun AppLockScreen(
     authenticator: AppLockAuthenticator,
+    fidoRequired: Boolean = false,
+    fidoLabel: String? = null,
     onSuccess: () -> Unit,
 ) {
     val context = LocalContext.current
     val activity = remember(context) { context.findFragmentActivity() }
     var errorMessage by remember { mutableStateOf<String?>(null) }
     var promptShown by remember { mutableStateOf(false) }
+    var fidoConfirmed by remember { mutableStateOf(!fidoRequired) }
 
     fun launchPrompt() {
         val act = activity ?: run {
@@ -71,16 +78,35 @@ private fun AppLockScreen(
             return
         }
         promptShown = true
-        authenticator.authenticate(act) { result ->
+        fun afterPrimary(result: AppLockAuthResult) {
             when (result) {
                 is AppLockAuthResult.Failure -> {
                     errorMessage = result.message
                     promptShown = false
                 }
                 is AppLockAuthResult.Cancelled -> promptShown = false
-                is AppLockAuthResult.Success -> onSuccess()
+                is AppLockAuthResult.Success -> {
+                    if (fidoRequired && !fidoConfirmed) {
+                        authenticator.confirmSecurityKey(act, fidoLabel) { fidoResult ->
+                            when (fidoResult) {
+                                is AppLockAuthResult.Success -> {
+                                    fidoConfirmed = true
+                                    onSuccess()
+                                }
+                                is AppLockAuthResult.Failure -> {
+                                    errorMessage = fidoResult.message
+                                    promptShown = false
+                                }
+                                is AppLockAuthResult.Cancelled -> promptShown = false
+                            }
+                        }
+                    } else {
+                        onSuccess()
+                    }
+                }
             }
         }
+        authenticator.authenticate(act, ::afterPrimary)
     }
 
     LaunchedEffect(activity) {
@@ -115,6 +141,21 @@ private fun AppLockScreen(
             textAlign = TextAlign.Center,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
+        if (fidoRequired) {
+            Spacer(modifier = Modifier.height(12.dp))
+            Text(
+                text = "FIDO2 / YubiKey requis: ${fidoLabel ?: "security key"}",
+                style = MaterialTheme.typography.bodyMedium,
+                textAlign = TextAlign.Center,
+            )
+            Text(
+                text = "Après le déverrouillage appareil, une confirmation biométrie forte / clé est exigée.",
+                style = MaterialTheme.typography.bodySmall,
+                textAlign = TextAlign.Center,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(top = 4.dp),
+            )
+        }
         errorMessage?.let {
             Spacer(modifier = Modifier.height(12.dp))
             Text(it, color = MaterialTheme.colorScheme.error, textAlign = TextAlign.Center)

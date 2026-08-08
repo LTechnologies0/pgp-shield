@@ -19,7 +19,6 @@ import org.bouncycastle.openpgp.PGPSignature
 import org.bouncycastle.openpgp.PGPSignatureGenerator
 import org.bouncycastle.openpgp.PGPSignatureSubpacketGenerator
 import org.bouncycastle.openpgp.PGPUtil
-import org.bouncycastle.openpgp.operator.jcajce.JcaKeyFingerprintCalculator
 
 /**
  * Parameters for generating a key revocation certificate.
@@ -34,12 +33,12 @@ data class RevocationCertRequest(
     val passphrase: CharArray,
     val reason: Byte = RevocationReasonTags.NO_REASON,
     val reasonText: String = "",
+    /** When non-null, emit a SUBKEY_REVOCATION for this key ID instead of master KEY_REVOCATION. */
+    val subkeyId: Long? = null,
 )
 
 /** Generates armored OpenPGP key revocation signatures from a secret key ring. */
 class RevocationCertGenerator {
-    private val fingerprintCalculator = JcaKeyFingerprintCalculator()
-
     init {
         BouncyCastleProviderHolder.ensureRegistered()
     }
@@ -66,8 +65,16 @@ class RevocationCertGenerator {
             PgpOperators.contentSignerBuilder(masterPublic, useBc),
         )
         sigGen.setHashedSubpackets(hashed)
-        sigGen.init(PGPSignature.KEY_REVOCATION, privateKey)
-        val revocation = sigGen.generateCertification(masterPublic)
+
+        val revocation = if (request.subkeyId != null) {
+            val subPublic = secretRing.getPublicKey(request.subkeyId)
+                ?: throw PgpException("Subkey 0x${request.subkeyId.toString(16)} not found")
+            sigGen.init(PGPSignature.SUBKEY_REVOCATION, privateKey)
+            sigGen.generateCertification(masterPublic, subPublic)
+        } else {
+            sigGen.init(PGPSignature.KEY_REVOCATION, privateKey)
+            sigGen.generateCertification(masterPublic)
+        }
 
         return ByteArrayOutputStream().use { out ->
             ArmoredOutputStream(out).use { armor -> revocation.encode(armor) }
@@ -78,6 +85,6 @@ class RevocationCertGenerator {
     /** Parses an armored secret key ring from bytes. */
     private fun loadSecretRing(armored: ByteArray): PGPSecretKeyRing =
         PGPUtil.getDecoderStream(ByteArrayInputStream(armored)).use { input ->
-            PGPObjectFactory(input, fingerprintCalculator).nextObject() as PGPSecretKeyRing
+            PGPObjectFactory(input, PgpFingerprints.calculator).nextObject() as PGPSecretKeyRing
         }
 }

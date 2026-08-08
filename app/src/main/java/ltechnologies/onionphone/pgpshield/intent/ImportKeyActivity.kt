@@ -7,8 +7,6 @@ package ltechnologies.onionphone.pgpshield.intent
 import android.content.Intent
 import android.net.Uri
 import android.os.Bundle
-import androidx.activity.ComponentActivity
-import androidx.activity.compose.setContent
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -32,9 +30,7 @@ import ltechnologies.onionphone.pgpshield.data.KeyRepository
 import ltechnologies.onionphone.pgpshield.data.SettingsRepository
 import ltechnologies.onionphone.pgpshield.engine.PgpIo
 import ltechnologies.onionphone.pgpshield.ui.components.IntentFlowScaffold
-import ltechnologies.onionphone.pgpshield.ui.theme.PgpShieldTheme
 import ltechnologies.onionphone.pgpshield.util.ArmoredKeyDetector
-import ltechnologies.onionphone.pgpshield.util.WindowSecureHelper
 import javax.inject.Inject
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -47,17 +43,15 @@ import kotlinx.coroutines.withContext
  * guard, auto-detects secret vs. public material and imports it into the store.
  */
 @AndroidEntryPoint
-class ImportKeyActivity : ComponentActivity() {
+class ImportKeyActivity : LockedIntentActivity() {
     @Inject lateinit var keyRepository: KeyRepository
     @Inject lateinit var settingsRepository: SettingsRepository
 
     /** Builds the import UI and wires up the import action. */
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        WindowSecureHelper.bind(this, settingsRepository)
-        val label = intent.data?.lastPathSegment ?: getString(R.string.intent_default_key)
-        setContent {
-            PgpShieldTheme {
+                val label = intent.data?.lastPathSegment ?: getString(R.string.intent_default_key)
+        setVaultGatedContent(settingsRepository) {
                 var status by remember { mutableStateOf(getString(R.string.intent_import_key_status_fmt, label)) }
                 var error by remember { mutableStateOf<String?>(null) }
                 var busy by remember { mutableStateOf(false) }
@@ -108,7 +102,6 @@ class ImportKeyActivity : ComponentActivity() {
                         }
                     }
                 }
-            }
         }
     }
 

@@ -51,6 +51,12 @@ object AlgorithmLabels {
         KeyAlgorithmType.ECDSA_P256 -> "ECDSA P-256 + ECDH P-256"
         KeyAlgorithmType.ECDSA_P384 -> "ECDSA P-384 + ECDH P-384"
         KeyAlgorithmType.ECDSA_P521 -> "ECDSA P-521 + ECDH P-521"
+        KeyAlgorithmType.ECDSA_BRAINPOOL_P256R1 ->
+            "ECDSA brainpoolP256r1 + ECDH brainpoolP256r1"
+        KeyAlgorithmType.ECDSA_BRAINPOOL_P384R1 ->
+            "ECDSA brainpoolP384r1 + ECDH brainpoolP384r1"
+        KeyAlgorithmType.ECDSA_BRAINPOOL_P512R1 ->
+            "ECDSA brainpoolP512r1 + ECDH brainpoolP512r1"
         KeyAlgorithmType.DSA_ELGAMAL -> "DSA + ElGamal"
     }
 
@@ -58,11 +64,14 @@ object AlgorithmLabels {
     fun uiLabel(type: KeyAlgorithmType, rsaBits: Int = 3072): String = when (type) {
         KeyAlgorithmType.RSA -> "RSA $rsaBits"
         KeyAlgorithmType.ED25519 -> "ECC Curve25519 (Ed25519)"
-        KeyAlgorithmType.ED448 -> "ECC Ed448"
+        KeyAlgorithmType.ED448 -> "ECC Ed448 (limited interop)"
         KeyAlgorithmType.ECDSA_P256 -> "ECC P-256"
         KeyAlgorithmType.ECDSA_P384 -> "ECC P-384"
         KeyAlgorithmType.ECDSA_P521 -> "ECC P-521"
-        KeyAlgorithmType.DSA_ELGAMAL -> "DSA + ElGamal (legacy)"
+        KeyAlgorithmType.ECDSA_BRAINPOOL_P256R1 -> "ECC brainpoolP256r1"
+        KeyAlgorithmType.ECDSA_BRAINPOOL_P384R1 -> "ECC brainpoolP384r1"
+        KeyAlgorithmType.ECDSA_BRAINPOOL_P512R1 -> "ECC brainpoolP512r1"
+        KeyAlgorithmType.DSA_ELGAMAL -> "DSA + ElGamal (legacy, limited interop)"
     }
 
     /** Label for a subkey type when adding subkeys to an existing ring. */
@@ -70,22 +79,31 @@ object AlgorithmLabels {
         SubkeyType.ENCRYPT_RSA -> "RSA encrypt subkey"
         SubkeyType.SIGN_RSA -> "RSA sign subkey"
         SubkeyType.ENCRYPT_CV25519 -> "Cv25519 encrypt subkey"
-        SubkeyType.ENCRYPT_X448 -> "X448 encrypt subkey"
+        SubkeyType.ENCRYPT_X448 -> "X448 encrypt (limited interop)"
         SubkeyType.ENCRYPT_ECDH_P256 -> "ECDH P-256 encrypt"
         SubkeyType.ENCRYPT_ECDH_P384 -> "ECDH P-384 encrypt"
         SubkeyType.ENCRYPT_ECDH_P521 -> "ECDH P-521 encrypt"
+        SubkeyType.ENCRYPT_ECDH_BRAINPOOL_P256R1 -> "ECDH brainpoolP256r1 encrypt"
+        SubkeyType.ENCRYPT_ECDH_BRAINPOOL_P384R1 -> "ECDH brainpoolP384r1 encrypt"
+        SubkeyType.ENCRYPT_ECDH_BRAINPOOL_P512R1 -> "ECDH brainpoolP512r1 encrypt"
         SubkeyType.SIGN_ECDSA_P256 -> "ECDSA P-256 sign"
         SubkeyType.SIGN_ECDSA_P384 -> "ECDSA P-384 sign"
         SubkeyType.SIGN_ECDSA_P521 -> "ECDSA P-521 sign"
+        SubkeyType.SIGN_ECDSA_BRAINPOOL_P256R1 -> "ECDSA brainpoolP256r1 sign"
+        SubkeyType.SIGN_ECDSA_BRAINPOOL_P384R1 -> "ECDSA brainpoolP384r1 sign"
+        SubkeyType.SIGN_ECDSA_BRAINPOOL_P512R1 -> "ECDSA brainpoolP512r1 sign"
         SubkeyType.SIGN_ED25519 -> "Ed25519 sign subkey"
-        SubkeyType.SIGN_ED448 -> "Ed448 sign subkey"
-        SubkeyType.ENCRYPT_ELGAMAL -> "ElGamal encrypt subkey"
+        SubkeyType.SIGN_ED448 -> "Ed448 sign (limited interop)"
+        SubkeyType.ENCRYPT_ELGAMAL -> "ElGamal encrypt (legacy, limited interop)"
         SubkeyType.AUTH_RSA -> "RSA authentication subkey"
         SubkeyType.AUTH_ED25519 -> "Ed25519 authentication subkey"
-        SubkeyType.AUTH_ED448 -> "Ed448 authentication subkey"
+        SubkeyType.AUTH_ED448 -> "Ed448 auth (limited interop)"
         SubkeyType.AUTH_ECDSA_P256 -> "ECDSA P-256 authentication"
         SubkeyType.AUTH_ECDSA_P384 -> "ECDSA P-384 authentication"
         SubkeyType.AUTH_ECDSA_P521 -> "ECDSA P-521 authentication"
+        SubkeyType.AUTH_ECDSA_BRAINPOOL_P256R1 -> "ECDSA brainpoolP256r1 authentication"
+        SubkeyType.AUTH_ECDSA_BRAINPOOL_P384R1 -> "ECDSA brainpoolP384r1 authentication"
+        SubkeyType.AUTH_ECDSA_BRAINPOOL_P512R1 -> "ECDSA brainpoolP512r1 authentication"
     }
 }
 
@@ -101,5 +119,8 @@ enum class KeyAlgorithmType {
     ECDSA_P256,
     ECDSA_P384,
     ECDSA_P521,
+    ECDSA_BRAINPOOL_P256R1,
+    ECDSA_BRAINPOOL_P384R1,
+    ECDSA_BRAINPOOL_P512R1,
     DSA_ELGAMAL,
 }

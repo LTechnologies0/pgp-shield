@@ -12,6 +12,8 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ElevatedCard
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
@@ -66,6 +68,7 @@ fun SettingsScreen(
     onBack: () -> Unit,
     onOpenQrKeys: () -> Unit = {},
     onOpenSmartCard: () -> Unit = {},
+    onOpenAutocrypt: () -> Unit = {},
     showBack: Boolean = true,
     isActive: Boolean = true,
     viewModel: SettingsViewModel = hiltViewModel(),
@@ -189,6 +192,20 @@ fun SettingsScreen(
                             checked = state.settings.autocryptEnabled,
                             onChecked = viewModel::setAutocrypt,
                         )
+                        val interopOptions = listOf(
+                            "RFC9580_MODERN" to "Modern RFC 9580 (SEIPDv2)",
+                            "LIBREPGP_GNUPG" to "GnuPG LibrePGP (v5 AEAD)",
+                            "LEGACY_MDC" to "Legacy MDC",
+                        )
+                        val interopLabel = interopOptions.find { it.first == state.settings.interopProfile }?.second
+                            ?: interopOptions.first().second
+                        StringSelectDropdown(
+                            label = stringResource(R.string.settings_interop_profile),
+                            value = interopLabel,
+                            options = interopOptions,
+                            onSelect = viewModel::setInteropProfile,
+                            modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp),
+                        )
                         val languageOptions = listOf(
                             "system" to stringResource(R.string.settings_language_system),
                             "en" to stringResource(R.string.settings_language_en),
@@ -206,10 +223,21 @@ fun SettingsScreen(
                         )
                         OutlinedButton(
                             onClick = viewModel::refreshAllKeys,
+                            enabled = !state.isBusy,
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .padding(horizontal = 16.dp, vertical = 8.dp),
-                        ) { Text(stringResource(R.string.settings_refresh_all_keys)) }
+                        ) {
+                            if (state.isBusy) {
+                                CircularProgressIndicator(
+                                    modifier = Modifier
+                                        .padding(end = 8.dp)
+                                        .size(18.dp),
+                                    strokeWidth = 2.dp,
+                                )
+                            }
+                            Text(stringResource(R.string.settings_refresh_all_keys))
+                        }
                         OutlinedButton(
                             onClick = onOpenQrKeys,
                             modifier = Modifier
@@ -221,7 +249,13 @@ fun SettingsScreen(
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .padding(horizontal = 16.dp, vertical = 4.dp),
-                        ) { Text(stringResource(R.string.settings_smart_card_stub)) }
+                        ) { Text(stringResource(R.string.settings_smart_card)) }
+                        OutlinedButton(
+                            onClick = onOpenAutocrypt,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 16.dp, vertical = 4.dp),
+                        ) { Text(stringResource(R.string.settings_autocrypt_peers)) }
                     }
                 }
 

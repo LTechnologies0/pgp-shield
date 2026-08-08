@@ -5,6 +5,7 @@ package ltechnologies.onionphone.pgpshield.ui.keys
  * (create, import, delete, revoke, subkeys, passphrase, certification, keyserver).
  */
 
+import androidx.fragment.app.FragmentActivity
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import dagger.hilt.android.lifecycle.HiltViewModel
@@ -14,11 +15,19 @@ import ltechnologies.onionphone.pgpshield.data.KeyRepository
 import ltechnologies.onionphone.pgpshield.data.KeySummary
 import ltechnologies.onionphone.pgpshield.data.SettingsRepository
 import ltechnologies.onionphone.pgpshield.engine.AlgorithmLabels
+import ltechnologies.onionphone.pgpshield.engine.CryptoProgress
+import ltechnologies.onionphone.pgpshield.engine.CryptoProgressSnapshot
 import ltechnologies.onionphone.pgpshield.engine.KeyAlgorithmType
+import ltechnologies.onionphone.pgpshield.engine.KeyFormat
 import ltechnologies.onionphone.pgpshield.engine.KeyRingExporter
+import ltechnologies.onionphone.pgpshield.engine.KeyRingReader
 import ltechnologies.onionphone.pgpshield.engine.SubkeyType
+import ltechnologies.onionphone.pgpshield.security.HardwarePassphraseGate
+import ltechnologies.onionphone.pgpshield.util.SensitiveWiper
 import javax.inject.Inject
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
@@ -28,7 +37,9 @@ import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import timber.log.Timber
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.sync.Semaphore
 
 /**
  * [ViewModel] backing the key list and key detail screens.
@@ -42,6 +53,7 @@ class KeyListViewModel @Inject constructor(
     private val keyRepository: KeyRepository,
     private val cryptoOperations: CryptoOperations,
     private val settingsRepository: SettingsRepository,
+    private val hardwarePassphraseGate: HardwarePassphraseGate,
 ) : ViewModel() {
     val keys: StateFlow<List<KeySummary>> = keyRepository.observeKeys()
         .distinctUntilChanged()
@@ -51,11 +63,27 @@ class KeyListViewModel @Inject constructor(
         .map { it.showFingerprintOnList }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), true)
 
+    /** StrongBox/TEE auth-bound passphrase vault available on this device. */
+    fun hardwarePassphraseAvailable(): Boolean = hardwarePassphraseGate.isAvailable()
+
     private val _error = MutableStateFlow<String?>(null)
     val error: StateFlow<String?> = _error.asStateFlow()
 
     private val _isLoading = MutableStateFlow(false)
     val isLoading: StateFlow<Boolean> = _isLoading.asStateFlow()
+
+    private val _cryptoProgress = MutableStateFlow<CryptoProgressSnapshot?>(null)
+    val cryptoProgress: StateFlow<CryptoProgressSnapshot?> = _cryptoProgress.asStateFlow()
+
+    init {
+        viewModelScope.launch {
+            CryptoProgress.snapshots.collect { snap ->
+                if (_isLoading.value) {
+                    _cryptoProgress.value = snap
+                }
+            }
+        }
+    }
 
     /** Clears the current error message. */
     fun clearError() {
@@ -70,6 +98,10 @@ class KeyListViewModel @Inject constructor(
     /**
      * Generates a new key ring for [userId] and imports it into the repository.
      * The [passphrase] is wiped on completion; [onDone] runs on success.
+     *
+     * When [hardwareManagedPassphrase] is true, a high-entropy passphrase is generated,
+     * sealed under an auth-bound StrongBox/TEE key after PIN/biometric, and the UI must
+     * not retain or prompt for that passphrase.
      */
     fun createKey(
         userId: String,
@@ -77,28 +109,90 @@ class KeyListViewModel @Inject constructor(
         algorithmType: KeyAlgorithmType,
         rsaBits: Int,
         onDone: () -> Unit,
+        keyFormat: KeyFormat = KeyFormat.V4,
+        expirySeconds: Long = 0L,
+        preferNativeCurveTags: Boolean = false,
+        experimentalPqc: Boolean = false,
+        hardwareManagedPassphrase: Boolean = false,
+        activity: FragmentActivity? = null,
     ) {
         viewModelScope.launch {
             _isLoading.value = true
+            var effectivePass: CharArray? = null
             try {
                 _error.value = null
-                val generated = withContext(Dispatchers.Default) {
-                    cryptoOperations.generateKey(userId, passphrase, algorithmType, rsaBits)
+                if (experimentalPqc) {
+                    ltechnologies.onionphone.pgpshield.engine.PqcSupport.requireAvailable()
                 }
-                val label = AlgorithmLabels.forKeyType(algorithmType, rsaBits)
-                withContext(Dispatchers.IO) {
-                    keyRepository.importGeneratedKeyRing(
-                        generated.publicArmored,
-                        generated.secretArmored,
-                        label,
+                effectivePass = if (hardwareManagedPassphrase) {
+                    requireNotNull(activity) { "Activity required for hardware-managed passphrase" }
+                    require(hardwarePassphraseGate.isAvailable()) {
+                        "Coffre StrongBox/TEE indisponible (verrouillage d'écran + enclave requis)"
+                    }
+                    hardwarePassphraseGate.generatePassphrase()
+                } else {
+                    passphrase
+                }
+                val pass = effectivePass!!
+                val generated = withContext(Dispatchers.Default) {
+                    cryptoOperations.generateKeySuspending(
+                        userId,
+                        pass,
+                        algorithmType,
+                        rsaBits,
+                        keyFormat,
+                        expirySeconds,
+                        preferNativeCurveTags = preferNativeCurveTags || keyFormat == KeyFormat.V6,
                     )
+                }
+                if (hardwareManagedPassphrase) {
+                    val masterKeyId = withContext(Dispatchers.Default) {
+                        KeyRingReader().readSecretKeyRing(generated.secretArmored.inputStream()).masterKeyId
+                    }
+                    val wrapInfo = hardwarePassphraseGate.sealAfterAuth(activity!!, masterKeyId, pass)
+                    Timber.i(
+                        "Hardware passphrase sealed: strongBox=%s hardware=%s alias=%s",
+                        wrapInfo.strongBoxBacked,
+                        wrapInfo.insideSecureHardware,
+                        wrapInfo.alias,
+                    )
+                    try {
+                        val label = AlgorithmLabels.forKeyType(algorithmType, rsaBits)
+                        withContext(Dispatchers.IO) {
+                            keyRepository.importGeneratedKeyRing(
+                                generated.publicArmored,
+                                generated.secretArmored,
+                                label,
+                                hardwareManagedPassphrase = true,
+                            )
+                        }
+                    } catch (e: Exception) {
+                        hardwarePassphraseGate.delete(masterKeyId)
+                        throw e
+                    }
+                } else {
+                    val label = AlgorithmLabels.forKeyType(algorithmType, rsaBits)
+                    withContext(Dispatchers.IO) {
+                        keyRepository.importGeneratedKeyRing(
+                            generated.publicArmored,
+                            generated.secretArmored,
+                            label,
+                            hardwareManagedPassphrase = false,
+                        )
+                    }
                 }
                 onDone()
             } catch (e: Exception) {
-                _error.value = e.message ?: "${e.javaClass.simpleName}: Key creation failed"
+                val root = generateSequence<Throwable>(e) { it.cause }.last()
+                val detail = e.message?.takeIf { it.isNotBlank() }
+                    ?: root.message?.takeIf { it.isNotBlank() }
+                    ?: root.javaClass.simpleName
+                _error.value = "Key creation failed: $detail"
+                Timber.e(e, "Key creation failed")
             } finally {
-                passphrase.fill('\u0000')
+                SensitiveWiper.wipe(effectivePass, passphrase)
                 _isLoading.value = false
+                _cryptoProgress.value = null
             }
         }
     }
@@ -130,25 +224,9 @@ class KeyListViewModel @Inject constructor(
             try {
                 _error.value = null
                 withContext(Dispatchers.IO) { keyRepository.deleteKey(keyId) }
-                // #region agent log
-                ltechnologies.onionphone.pgpshield.util.DebugAgentLog.log(
-                    location = "KeyListViewModel.kt:deleteKey",
-                    message = "key deleted",
-                    data = mapOf("keyId" to keyId),
-                    hypothesisId = "E",
-                )
-                // #endregion
                 onDone?.invoke()
             } catch (e: Exception) {
                 _error.value = e.message ?: "Delete failed"
-                // #region agent log
-                ltechnologies.onionphone.pgpshield.util.DebugAgentLog.log(
-                    location = "KeyListViewModel.kt:deleteKey",
-                    message = "delete failed",
-                    data = mapOf("keyId" to keyId, "error" to (e.message ?: e.javaClass.simpleName)),
-                    hypothesisId = "E",
-                )
-                // #endregion
             } finally {
                 _isLoading.value = false
             }
@@ -156,8 +234,19 @@ class KeyListViewModel @Inject constructor(
     }
 
     /** Marks the key ring identified by [keyId] as revoked. */
-    fun revokeKey(keyId: Long) {
-        viewModelScope.launch { keyRepository.revokeKey(keyId) }
+    fun revokeKey(keyId: Long, onDone: (() -> Unit)? = null) {
+        viewModelScope.launch {
+            _isLoading.value = true
+            try {
+                _error.value = null
+                withContext(Dispatchers.IO) { keyRepository.revokeKey(keyId) }
+                onDone?.invoke()
+            } catch (e: Exception) {
+                _error.value = e.message ?: "Revoke failed"
+            } finally {
+                _isLoading.value = false
+            }
+        }
     }
 
     /**
@@ -169,6 +258,7 @@ class KeyListViewModel @Inject constructor(
         passphrase: CharArray,
         subkeyType: SubkeyType,
         rsaBits: Int,
+        expirySeconds: Long = 0L,
         onDone: () -> Unit,
     ) {
         viewModelScope.launch {
@@ -180,7 +270,7 @@ class KeyListViewModel @Inject constructor(
                         ?: error("Secret key not found")
                 }
                 val updated = withContext(Dispatchers.Default) {
-                    cryptoOperations.addSubkey(secret, passphrase, subkeyType, rsaBits)
+                    cryptoOperations.addSubkey(secret, passphrase, subkeyType, rsaBits, expirySeconds)
                 }
                 val public = KeyRingExporter.publicArmoredFromSecret(updated)
                 withContext(Dispatchers.IO) {
@@ -189,14 +279,6 @@ class KeyListViewModel @Inject constructor(
                 onDone()
             } catch (e: Exception) {
                 _error.value = e.message ?: "Subkey add failed"
-                // #region agent log
-                ltechnologies.onionphone.pgpshield.util.DebugAgentLog.log(
-                    location = "KeyListViewModel.kt:addSubkey",
-                    message = "subkey add failed",
-                    data = mapOf("keyId" to keyId, "error" to (e.message ?: e.javaClass.simpleName)),
-                    hypothesisId = "C",
-                )
-                // #endregion
             } finally {
                 passphrase.fill('\u0000')
                 _isLoading.value = false
@@ -347,15 +429,24 @@ class KeyListViewModel @Inject constructor(
                 if (!settings.keyserverLookupEnabled) {
                     error("Keyserver lookup is disabled in Settings")
                 }
-                val url = settings.keyserverUrl
                 val keys = keyRepository.observeKeys().first()
-                var ok = 0
-                withContext(Dispatchers.IO) {
-                    for (key in keys) {
-                        runCatching {
-                            keyRepository.refreshKeyFromKeyserver(key.masterKeyId, url)
-                            ok++
-                        }
+                val url = settings.keyserverUrl
+                val ok = withContext(Dispatchers.IO) {
+                    coroutineScope {
+                        val limit = Semaphore(3)
+                        keys.map { key ->
+                            async {
+                                limit.acquire()
+                                try {
+                                    runCatching {
+                                        keyRepository.refreshKeyFromKeyserver(key.masterKeyId, url)
+                                        1
+                                    }.getOrDefault(0)
+                                } finally {
+                                    limit.release()
+                                }
+                            }
+                        }.sumOf { it.await() }
                     }
                 }
                 onDone(ok)
@@ -387,13 +478,17 @@ class KeyListViewModel @Inject constructor(
     }
 
     /** Updates the local owner-trust level for [keyId]. */
-    fun setTrustLevel(keyId: Long, trustLevel: Int) {
+    fun setTrustLevel(keyId: Long, trustLevel: Int, onDone: (() -> Unit)? = null) {
         viewModelScope.launch {
+            _isLoading.value = true
             try {
                 _error.value = null
                 withContext(Dispatchers.IO) { keyRepository.setTrustLevel(keyId, trustLevel) }
+                onDone?.invoke()
             } catch (e: Exception) {
                 _error.value = e.message ?: "Trust update failed"
+            } finally {
+                _isLoading.value = false
             }
         }
     }

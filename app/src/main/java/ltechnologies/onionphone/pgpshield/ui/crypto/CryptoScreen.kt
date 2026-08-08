@@ -37,23 +37,29 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.PrimaryTabRow
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Tab
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.res.stringResource
+import androidx.fragment.app.FragmentActivity
 import androidx.hilt.navigation.compose.hiltViewModel
 import ltechnologies.onionphone.pgpshield.R
+import ltechnologies.onionphone.pgpshield.engine.MessageCompression
+import ltechnologies.onionphone.pgpshield.engine.MessageIntegrity
 import ltechnologies.onionphone.pgpshield.data.KeySummary
 import ltechnologies.onionphone.pgpshield.ui.components.AdaptiveContentWidth
 import ltechnologies.onionphone.pgpshield.ui.components.AdaptiveTwoPane
@@ -92,6 +98,8 @@ fun CryptoScreen(
     val keys by viewModel.keys.collectAsStateWithLifecycle()
     var secretMenu by remember { mutableStateOf(false) }
     var mode by rememberSaveable { mutableStateOf(CryptoMode.ENCRYPT) }
+    var passphraseField by remember { mutableStateOf("") }
+    var pkcs12PasswordField by remember { mutableStateOf("") }
     val secretKey = remember(keys, state.secretKeyId) {
         keys.find { it.masterKeyId == state.secretKeyId }
     }
@@ -99,6 +107,14 @@ fun CryptoScreen(
     val context = LocalContext.current
     val metrics = rememberAdaptiveMetrics()
     val scope = rememberCoroutineScope()
+
+    LaunchedEffect(context) {
+        (context as? FragmentActivity)?.let { viewModel.bindHost(it) }
+    }
+    LaunchedEffect(state.sensitiveInputEpoch) {
+        passphraseField = ""
+        pkcs12PasswordField = ""
+    }
 
     val pickInputFile = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         if (uri == null) return@rememberLauncherForActivityResult
@@ -189,6 +205,11 @@ fun CryptoScreen(
                         )
                     }
                 }
+                FormatPicker(
+                    format = state.format,
+                    onSelect = viewModel::setFormat,
+                    enabled = mode == CryptoMode.ENCRYPT || mode == CryptoMode.DECRYPT,
+                )
                 Box(
                     modifier = Modifier
                         .weight(1f)
@@ -203,24 +224,55 @@ fun CryptoScreen(
                                 onSelect = viewModel::setPayload,
                             )
                             when (mode) {
-                                CryptoMode.ENCRYPT -> EncryptPanel(
-                                    state = state,
-                                    keys = keys,
-                                    metrics = metrics,
-                                    viewModel = viewModel,
-                                    onPickFile = { pickInputFile.launch(arrayOf("*/*")) },
-                                    onPickFolder = { pickMultipleFiles.launch(arrayOf("*/*")) },
-                                )
-                                CryptoMode.DECRYPT -> DecryptPanel(
-                                    state = state,
-                                    secretKeys = secretKeys,
-                                    secretKey = secretKey,
-                                    secretMenu = secretMenu,
-                                    onSecretMenuChange = { secretMenu = it },
-                                    metrics = metrics,
-                                    viewModel = viewModel,
-                                    onPickFile = { pickInputFile.launch(arrayOf("*/*")) },
-                                )
+                                CryptoMode.ENCRYPT -> if (state.format == CryptoFormat.SMIME) {
+                                    SmimeEncryptPanel(
+                                        state = state,
+                                        viewModel = viewModel,
+                                        metrics = metrics,
+                                        pkcs12Password = pkcs12PasswordField,
+                                        onPkcs12PasswordChange = {
+                                            pkcs12PasswordField = it
+                                            viewModel.setSmimePkcs12Password(it)
+                                        },
+                                        onPickFile = { pickInputFile.launch(arrayOf("*/*")) },
+                                        onPickPkcs12 = {
+                                            pickInputFile.launch(arrayOf("application/x-pkcs12", "application/pkcs12", "*/*"))
+                                        },
+                                    )
+                                } else {
+                                    EncryptPanel(
+                                        state = state,
+                                        keys = keys,
+                                        metrics = metrics,
+                                        viewModel = viewModel,
+                                        onPickFile = { pickInputFile.launch(arrayOf("*/*")) },
+                                        onPickFolder = { pickMultipleFiles.launch(arrayOf("*/*")) },
+                                    )
+                                }
+                                CryptoMode.DECRYPT -> if (state.format == CryptoFormat.SMIME) {
+                                    SmimeDecryptPanel(
+                                        state = state,
+                                        viewModel = viewModel,
+                                        metrics = metrics,
+                                        onPickFile = { pickInputFile.launch(arrayOf("*/*", "application/pkcs7-mime")) },
+                                    )
+                                } else {
+                                    DecryptPanel(
+                                        state = state,
+                                        secretKeys = secretKeys,
+                                        secretKey = secretKey,
+                                        secretMenu = secretMenu,
+                                        onSecretMenuChange = { secretMenu = it },
+                                        metrics = metrics,
+                                        viewModel = viewModel,
+                                        passphrase = passphraseField,
+                                        onPassphraseChange = {
+                                            passphraseField = it
+                                            viewModel.setPassphrase(it)
+                                        },
+                                        onPickFile = { pickInputFile.launch(arrayOf("*/*")) },
+                                    )
+                                }
                                 CryptoMode.SIGN -> SignPanel(
                                     state = state,
                                     secretKeys = secretKeys,
@@ -229,6 +281,11 @@ fun CryptoScreen(
                                     onSecretMenuChange = { secretMenu = it },
                                     metrics = metrics,
                                     viewModel = viewModel,
+                                    passphrase = passphraseField,
+                                    onPassphraseChange = {
+                                        passphraseField = it
+                                        viewModel.setPassphrase(it)
+                                    },
                                     onPickFile = { pickInputFile.launch(arrayOf("*/*")) },
                                 )
                                 CryptoMode.VERIFY -> VerifyPanel(
@@ -290,6 +347,221 @@ private fun PayloadTypePicker(mode: CryptoMode, payload: CryptoPayload, onSelect
     }
 }
 
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun FormatPicker(
+    format: CryptoFormat,
+    onSelect: (CryptoFormat) -> Unit,
+    enabled: Boolean,
+) {
+    if (!enabled) return
+    SingleChoiceSegmentedButtonRow(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 8.dp, vertical = 4.dp),
+    ) {
+        SegmentedButton(
+            selected = format == CryptoFormat.OPENPGP,
+            onClick = { onSelect(CryptoFormat.OPENPGP) },
+            shape = SegmentedButtonDefaults.itemShape(index = 0, count = 2),
+        ) { Text("OpenPGP") }
+        SegmentedButton(
+            selected = format == CryptoFormat.SMIME,
+            onClick = { onSelect(CryptoFormat.SMIME) },
+            shape = SegmentedButtonDefaults.itemShape(index = 1, count = 2),
+        ) { Text(stringResource(R.string.crypto_smime_mode)) }
+    }
+}
+
+@Composable
+private fun SmimeEncryptPanel(
+    state: CryptoUiState,
+    viewModel: CryptoViewModel,
+    metrics: ltechnologies.onionphone.pgpshield.ui.components.AdaptiveMetrics,
+    pkcs12Password: String,
+    onPkcs12PasswordChange: (String) -> Unit,
+    onPickFile: () -> Unit,
+    onPickPkcs12: () -> Unit,
+) {
+    Text(
+        stringResource(R.string.crypto_smime_encrypt_hint),
+        style = MaterialTheme.typography.bodySmall,
+        modifier = Modifier.padding(top = 8.dp),
+    )
+    if (state.smimeIdentities.isEmpty()) {
+        Text(
+            stringResource(R.string.crypto_smime_no_certs),
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.error,
+            modifier = Modifier.padding(top = 8.dp),
+        )
+    } else {
+        state.smimeIdentities.forEach { id ->
+            val selected = id.alias in state.smimeRecipientAliases
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(top = 4.dp),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text(
+                    text = id.alias + " — " + id.certificate.subjectX500Principal.name,
+                    style = MaterialTheme.typography.bodyMedium,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.weight(1f),
+                )
+                Switch(
+                    checked = selected,
+                    onCheckedChange = { checked ->
+                        val next = if (checked) {
+                            state.smimeRecipientAliases + id.alias
+                        } else {
+                            state.smimeRecipientAliases - id.alias
+                        }
+                        viewModel.setSmimeRecipientAliases(next)
+                    },
+                )
+            }
+        }
+    }
+    OutlinedTextField(
+        value = pkcs12Password,
+        onValueChange = onPkcs12PasswordChange,
+        label = { Text(stringResource(R.string.crypto_smime_pkcs12_password)) },
+        visualTransformation = PasswordVisualTransformation(),
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(top = 8.dp),
+        singleLine = true,
+    )
+    OutlinedButton(
+        onClick = onPickPkcs12,
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(top = 8.dp),
+    ) { Text(stringResource(R.string.crypto_smime_import_pkcs12)) }
+    val name = state.inputFileName
+    if (state.inputFileBytes != null && name != null &&
+        (name.endsWith(".p12", true) || name.endsWith(".pfx", true))
+    ) {
+        val pkcs12 = state.inputFileBytes
+        Button(
+            onClick = { if (pkcs12 != null) viewModel.importSmimePkcs12(pkcs12) },
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(top = 4.dp),
+            enabled = !state.isBusy && pkcs12 != null,
+        ) { Text(stringResource(R.string.crypto_smime_confirm_import)) }
+    }
+    if (state.payload == CryptoPayload.FILE) {
+        FilePickRow(stringResource(R.string.crypto_no_file_selected), state.inputFileName, onPickFile)
+        ActionButton(
+            label = stringResource(R.string.crypto_encrypt_file_action),
+            busy = state.isBusy,
+            onClick = viewModel::encrypt,
+            enabled = state.inputFileBytes != null && state.smimeRecipientAliases.isNotEmpty(),
+        )
+    } else {
+        AdaptiveTwoPane(
+            metrics = metrics,
+            modifier = Modifier.padding(top = 8.dp),
+            start = {
+                OutlinedTextField(
+                    value = state.plaintext,
+                    onValueChange = viewModel::setPlaintext,
+                    label = { Text(stringResource(R.string.crypto_plaintext)) },
+                    modifier = Modifier.fillMaxWidth().adaptiveTextFieldHeight(metrics = metrics),
+                )
+            },
+            end = {
+                OutlinedTextField(
+                    value = state.output,
+                    onValueChange = {},
+                    readOnly = true,
+                    label = { Text(stringResource(R.string.crypto_smime_cms_output)) },
+                    modifier = Modifier.fillMaxWidth().adaptiveTextFieldHeight(metrics = metrics),
+                )
+            },
+        )
+        ActionButton(
+            label = stringResource(R.string.crypto_encrypt_action),
+            busy = state.isBusy,
+            onClick = viewModel::encrypt,
+            enabled = state.plaintext.isNotBlank() && state.smimeRecipientAliases.isNotEmpty(),
+        )
+    }
+}
+
+@Composable
+private fun SmimeDecryptPanel(
+    state: CryptoUiState,
+    viewModel: CryptoViewModel,
+    metrics: ltechnologies.onionphone.pgpshield.ui.components.AdaptiveMetrics,
+    onPickFile: () -> Unit,
+) {
+    val withKeys = state.smimeIdentities.filter { it.privateKey != null }
+    Text(
+        stringResource(R.string.crypto_smime_decrypt_hint),
+        style = MaterialTheme.typography.bodySmall,
+        modifier = Modifier.padding(top = 8.dp),
+    )
+    withKeys.forEach { id ->
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(top = 4.dp),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text(id.alias, modifier = Modifier.weight(1f))
+            Switch(
+                checked = state.smimeIdentityAlias == id.alias,
+                onCheckedChange = { if (it) viewModel.selectSmimeIdentity(id.alias) },
+            )
+        }
+    }
+    if (state.payload == CryptoPayload.FILE) {
+        FilePickRow(stringResource(R.string.crypto_no_file_selected), state.inputFileName, onPickFile)
+        ActionButton(
+            label = stringResource(R.string.crypto_decrypt_file_action),
+            busy = state.isBusy,
+            onClick = viewModel::decrypt,
+            enabled = state.inputFileBytes != null && state.smimeIdentityAlias != null,
+        )
+    } else {
+        AdaptiveTwoPane(
+            metrics = metrics,
+            modifier = Modifier.padding(top = 8.dp),
+            start = {
+                OutlinedTextField(
+                    value = state.ciphertext,
+                    onValueChange = viewModel::setCiphertext,
+                    label = { Text(stringResource(R.string.crypto_smime_cms_input)) },
+                    modifier = Modifier.fillMaxWidth().adaptiveTextFieldHeight(metrics = metrics),
+                )
+            },
+            end = {
+                OutlinedTextField(
+                    value = state.plaintext,
+                    onValueChange = {},
+                    readOnly = true,
+                    label = { Text(stringResource(R.string.crypto_plaintext)) },
+                    modifier = Modifier.fillMaxWidth().adaptiveTextFieldHeight(metrics = metrics),
+                )
+            },
+        )
+        ActionButton(
+            label = stringResource(R.string.crypto_decrypt_action),
+            busy = state.isBusy,
+            onClick = viewModel::decrypt,
+            enabled = state.ciphertext.isNotBlank() && state.smimeIdentityAlias != null,
+        )
+    }
+}
+
 @Composable
 private fun FilePickRow(label: String, fileName: String?, onPick: () -> Unit) {
     Row(
@@ -336,9 +608,48 @@ private fun EncryptPanel(
         keys = keys,
         selectedIds = state.recipientKeyIds,
         onSelectionChange = viewModel::setRecipientKeyIds,
-        keyFilter = { !it.isRevoked },
+        keyFilter = { !it.isRevoked && it.trustLevel != KeySummary.TRUST_NEVER },
         modifier = Modifier.padding(top = 8.dp),
     )
+    Text(
+        stringResource(R.string.crypto_integrity_profile),
+        style = MaterialTheme.typography.bodyMedium,
+        modifier = Modifier.padding(top = 8.dp),
+    )
+    listOf(
+        MessageIntegrity.SEIPD_V2_AEAD to "SEIPDv2 AEAD",
+        MessageIntegrity.LIBREPGP_V5_AEAD to "LibrePGP v5 AEAD",
+        MessageIntegrity.MDC to "MDC",
+    ).forEach { (value, label) ->
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text(label, style = MaterialTheme.typography.bodySmall)
+            Switch(
+                checked = state.messageIntegrity == value,
+                onCheckedChange = { if (it) viewModel.setMessageIntegrity(value) },
+            )
+        }
+    }
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(top = 4.dp),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text("Compress (ZLIB)", style = MaterialTheme.typography.bodyMedium)
+        Switch(
+            checked = state.messageCompression == MessageCompression.ZLIB,
+            onCheckedChange = {
+                viewModel.setMessageCompression(
+                    if (it) MessageCompression.ZLIB else MessageCompression.NONE,
+                )
+            },
+        )
+    }
     if (state.payload == CryptoPayload.FILE) {
         FilePickRow(stringResource(R.string.crypto_no_file_selected), state.inputFileName, onPickFile)
         ActionButton(
@@ -399,6 +710,8 @@ private fun DecryptPanel(
     onSecretMenuChange: (Boolean) -> Unit,
     metrics: ltechnologies.onionphone.pgpshield.ui.components.AdaptiveMetrics,
     viewModel: CryptoViewModel,
+    passphrase: String,
+    onPassphraseChange: (String) -> Unit,
     onPickFile: () -> Unit,
 ) {
     if (secretKeys.isEmpty()) {
@@ -416,14 +729,18 @@ private fun DecryptPanel(
         lineFormatter = ::formatKeySummaryLine,
         modifier = Modifier.padding(top = 8.dp),
     )
-    PassphraseField(state.passphrase, viewModel::setPassphrase)
+    PassphraseOrHardwareHint(
+        secretKey = secretKey,
+        passphrase = passphrase,
+        onPassphraseChange = onPassphraseChange,
+    )
     if (state.payload == CryptoPayload.FILE) {
         FilePickRow(stringResource(R.string.crypto_pick_encrypted_file), state.inputFileName, onPickFile)
         ActionButton(
             label = stringResource(R.string.crypto_decrypt_file_action),
             busy = state.isBusy,
             onClick = viewModel::decrypt,
-            enabled = state.inputFileBytes != null && state.secretKeyId != null && state.passphrase.isNotBlank(),
+            enabled = state.inputFileBytes != null && state.secretKeyId != null,
         )
         FileOutputRow(state.outputFileName, state.outputFileBytes)
     } else {
@@ -452,7 +769,7 @@ private fun DecryptPanel(
             label = stringResource(R.string.crypto_decrypt_action),
             busy = state.isBusy,
             onClick = viewModel::decrypt,
-            enabled = state.ciphertext.isNotBlank() && state.secretKeyId != null && state.passphrase.isNotBlank(),
+            enabled = state.ciphertext.isNotBlank() && state.secretKeyId != null,
         )
     }
 }
@@ -466,6 +783,8 @@ private fun SignPanel(
     onSecretMenuChange: (Boolean) -> Unit,
     metrics: ltechnologies.onionphone.pgpshield.ui.components.AdaptiveMetrics,
     viewModel: CryptoViewModel,
+    passphrase: String,
+    onPassphraseChange: (String) -> Unit,
     onPickFile: () -> Unit,
 ) {
     if (secretKeys.isEmpty()) {
@@ -483,14 +802,18 @@ private fun SignPanel(
         lineFormatter = ::formatKeySummaryLine,
         modifier = Modifier.padding(top = 8.dp),
     )
-    PassphraseField(state.passphrase, viewModel::setPassphrase)
+    PassphraseOrHardwareHint(
+        secretKey = secretKey,
+        passphrase = passphrase,
+        onPassphraseChange = onPassphraseChange,
+    )
     if (state.payload == CryptoPayload.FILE) {
         FilePickRow(stringResource(R.string.crypto_pick_file_to_sign), state.inputFileName, onPickFile)
         ActionButton(
             label = stringResource(R.string.crypto_sign_file_action),
             busy = state.isBusy,
             onClick = viewModel::sign,
-            enabled = state.inputFileBytes != null && state.secretKeyId != null && state.passphrase.isNotBlank(),
+            enabled = state.inputFileBytes != null && state.secretKeyId != null,
         )
         FileOutputRow(state.outputFileName, state.outputFileBytes)
     } else {
@@ -519,7 +842,7 @@ private fun SignPanel(
             label = stringResource(R.string.crypto_sign_message_action),
             busy = state.isBusy,
             onClick = viewModel::sign,
-            enabled = state.plaintext.isNotBlank() && state.secretKeyId != null && state.passphrase.isNotBlank(),
+            enabled = state.plaintext.isNotBlank() && state.secretKeyId != null,
         )
     }
 }
@@ -601,6 +924,24 @@ private fun FileOutputRow(fileName: String?, fileBytes: ByteArray?) {
             Icon(Icons.Default.Share, contentDescription = stringResource(R.string.common_share), modifier = Modifier.padding(end = 8.dp))
             Text(stringResource(R.string.crypto_share_filename_fmt, fileName))
         }
+    }
+}
+
+@Composable
+private fun PassphraseOrHardwareHint(
+    secretKey: KeySummary?,
+    passphrase: String,
+    onPassphraseChange: (String) -> Unit,
+) {
+    if (secretKey?.hardwareManagedPassphrase == true) {
+        Text(
+            text = stringResource(R.string.crypto_hardware_passphrase_hint),
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.primary,
+            modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
+        )
+    } else {
+        PassphraseField(passphrase, onPassphraseChange)
     }
 }
 

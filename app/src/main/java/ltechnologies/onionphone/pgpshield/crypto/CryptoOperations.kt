@@ -9,11 +9,16 @@ package ltechnologies.onionphone.pgpshield.crypto
  */
 
 import ltechnologies.onionphone.pgpshield.engine.ChangePassphraseRequest
+import ltechnologies.onionphone.pgpshield.engine.CryptoOperation
+import ltechnologies.onionphone.pgpshield.engine.CryptoProgress
 import ltechnologies.onionphone.pgpshield.engine.DecryptRequest
+import ltechnologies.onionphone.pgpshield.engine.EncryptPlaintext
 import ltechnologies.onionphone.pgpshield.engine.EncryptRequest
+import ltechnologies.onionphone.pgpshield.engine.EncryptResult
 import ltechnologies.onionphone.pgpshield.engine.GenerateKeyRequest
 import ltechnologies.onionphone.pgpshield.engine.GeneratedKeyRing
 import ltechnologies.onionphone.pgpshield.engine.KeyAlgorithmType
+import ltechnologies.onionphone.pgpshield.engine.KeyFormat
 import ltechnologies.onionphone.pgpshield.engine.KeyGenerator
 import ltechnologies.onionphone.pgpshield.engine.KeyPassphraseChanger
 import ltechnologies.onionphone.pgpshield.engine.AddSubkeyRequest
@@ -24,9 +29,12 @@ import ltechnologies.onionphone.pgpshield.engine.GpgTar
 import ltechnologies.onionphone.pgpshield.engine.GpgTarDecryptRequest
 import ltechnologies.onionphone.pgpshield.engine.GpgTarEncryptRequest
 import ltechnologies.onionphone.pgpshield.engine.KeyCertifier
+import ltechnologies.onionphone.pgpshield.engine.MessageCompression
+import ltechnologies.onionphone.pgpshield.engine.MessageIntegrity
 import ltechnologies.onionphone.pgpshield.engine.NamedFile
 import ltechnologies.onionphone.pgpshield.engine.PgpDecryptor
 import ltechnologies.onionphone.pgpshield.engine.PgpEncryptor
+import ltechnologies.onionphone.pgpshield.engine.PgpRecipientCapabilities
 import ltechnologies.onionphone.pgpshield.engine.PgpSigner
 import ltechnologies.onionphone.pgpshield.engine.PgpVerifier
 import ltechnologies.onionphone.pgpshield.engine.RevocationCertGenerator
@@ -51,7 +59,9 @@ import javax.inject.Singleton
  * zeroing of passphrase buffers remains the responsibility of the caller.
  */
 @Singleton
-class CryptoOperations @Inject constructor() {
+class CryptoOperations @Inject constructor(
+    val smartCardPort: SmartCardPort,
+) {
     private val keyGenerator = KeyGenerator()
     private val encryptor = PgpEncryptor()
     private val decryptor = PgpDecryptor()
@@ -65,8 +75,6 @@ class CryptoOperations @Inject constructor() {
     private val gpgTar = GpgTar()
     private val symmetricCipher = SymmetricCipher()
     private val smimeEngine = SmimeEngine()
-    // ponytail: NFC/smart-card stub; swap for real SmartCardPort when hardware wired
-    val smartCardPort: SmartCardPort = object : SmartCardPort {}
 
     /**
      * Generates a new secret/public key ring for [userId].
@@ -80,10 +88,39 @@ class CryptoOperations @Inject constructor() {
         passphrase: CharArray,
         algorithmType: KeyAlgorithmType = KeyAlgorithmType.RSA,
         rsaBits: Int = 3072,
+        keyFormat: KeyFormat = KeyFormat.V4,
+        expirySeconds: Long = 0L,
+        preferNativeCurveTags: Boolean = false,
     ): GeneratedKeyRing =
-        keyGenerator.generateKeyRing(
-            GenerateKeyRequest(userId, passphrase, algorithmType, rsaBits),
-        )
+        CryptoProgress.measure(CryptoOperation.KEYGEN) {
+            kotlinx.coroutines.runBlocking {
+                keyGenerator.generateKeyRing(
+                    GenerateKeyRequest(
+                        userId, passphrase, algorithmType, rsaBits, keyFormat, expirySeconds,
+                        preferNativeCurveTags = preferNativeCurveTags,
+                    ),
+                )
+            }
+        }.first
+
+    /** Suspend variant — preferred from coroutines (no nested runBlocking). */
+    suspend fun generateKeySuspending(
+        userId: String,
+        passphrase: CharArray,
+        algorithmType: KeyAlgorithmType = KeyAlgorithmType.RSA,
+        rsaBits: Int = 3072,
+        keyFormat: KeyFormat = KeyFormat.V4,
+        expirySeconds: Long = 0L,
+        preferNativeCurveTags: Boolean = false,
+    ): GeneratedKeyRing =
+        CryptoProgress.measureSuspend(CryptoOperation.KEYGEN) {
+            keyGenerator.generateKeyRing(
+                GenerateKeyRequest(
+                    userId, passphrase, algorithmType, rsaBits, keyFormat, expirySeconds,
+                    preferNativeCurveTags = preferNativeCurveTags,
+                ),
+            )
+        }.first
 
     /**
      * Encrypts [plaintext] to one or more recipients.
@@ -97,45 +134,125 @@ class CryptoOperations @Inject constructor() {
         recipientPublicArmored: List<ByteArray>,
         asciiArmor: Boolean = true,
         fileName: String = "_CONSOLE",
+        integrity: MessageIntegrity = MessageIntegrity.SEIPD_V2_AEAD,
+        compression: MessageCompression = MessageCompression.NONE,
+        signSecretArmored: ByteArray? = null,
+        signPassphrase: CharArray? = null,
+        passphrase: CharArray? = null,
     ) =
-        encryptor.encrypt(
-            EncryptRequest(
-                plaintext = plaintext,
-                recipientKeyRings = recipientPublicArmored,
-                asciiArmor = asciiArmor,
-                fileName = fileName,
-            ),
-        )
+        CryptoProgress.measure(CryptoOperation.ENCRYPT) {
+            encryptor.encrypt(
+                EncryptRequest(
+                    plaintext = plaintext,
+                    recipientKeyRings = recipientPublicArmored,
+                    asciiArmor = asciiArmor,
+                    fileName = fileName,
+                    integrity = integrity,
+                    // Honor requested integrity: SEIPDv2 falls back only via resolveIntegrity
+                    // (fail-closed when recipients lack Features), never a silent MDC downgrade.
+                    forceIntegrity = integrity == MessageIntegrity.LIBREPGP_V5_AEAD,
+                    compression = compression,
+                    signSecretRingArmored = signSecretArmored,
+                    signPassphrase = signPassphrase,
+                    passphrase = passphrase,
+                ),
+            )
+        }.first
+
+    /**
+     * Encrypts many plaintexts to the same recipients (parse rings once, parallel BC).
+     *
+     * Prefer from coroutines; [parallelism] caps concurrent session encrypts.
+     */
+    suspend fun encryptMany(
+        plaintexts: List<EncryptPlaintext>,
+        recipientPublicArmored: List<ByteArray>,
+        parallelism: Int = 4,
+        integrity: MessageIntegrity = MessageIntegrity.SEIPD_V2_AEAD,
+        compression: MessageCompression = MessageCompression.NONE,
+    ): List<EncryptResult> =
+        CryptoProgress.measureSuspend(CryptoOperation.ENCRYPT_MANY) {
+            encryptor.encryptMany(
+                plaintexts,
+                recipientPublicArmored,
+                parallelism,
+                integrity = integrity,
+                compression = compression,
+            )
+        }.first
+
+    /** Suspend encrypt — no nested runBlocking when already on a dispatcher. */
+    suspend fun encryptSuspending(
+        plaintext: ByteArray,
+        recipientPublicArmored: List<ByteArray>,
+        asciiArmor: Boolean = true,
+        fileName: String = "_CONSOLE",
+        integrity: MessageIntegrity = MessageIntegrity.SEIPD_V2_AEAD,
+        compression: MessageCompression = MessageCompression.NONE,
+        signSecretArmored: ByteArray? = null,
+        signPassphrase: CharArray? = null,
+    ) =
+        CryptoProgress.measureSuspend(CryptoOperation.ENCRYPT) {
+            encryptor.encryptSuspending(
+                EncryptRequest(
+                    plaintext = plaintext,
+                    recipientKeyRings = recipientPublicArmored,
+                    asciiArmor = asciiArmor,
+                    fileName = fileName,
+                    integrity = integrity,
+                    forceIntegrity = integrity == MessageIntegrity.LIBREPGP_V5_AEAD,
+                    compression = compression,
+                    signSecretRingArmored = signSecretArmored,
+                    signPassphrase = signPassphrase,
+                ),
+            )
+        }.first
 
     /** Decrypts [ciphertext] using the given secret key ring and [passphrase]. */
-    fun decrypt(ciphertext: ByteArray, secretArmored: ByteArray, passphrase: CharArray) =
-        decryptor.decrypt(
-            DecryptRequest(
-                ciphertext = ciphertext,
-                secretKeyRingArmored = secretArmored,
-                passphrase = passphrase,
-            ),
-        )
+    fun decrypt(
+        ciphertext: ByteArray,
+        secretArmored: ByteArray,
+        passphrase: CharArray,
+        signerPublicArmored: List<ByteArray> = emptyList(),
+    ) =
+        CryptoProgress.measure(CryptoOperation.DECRYPT) {
+            decryptor.decrypt(
+                DecryptRequest(
+                    ciphertext = ciphertext,
+                    secretKeyRingArmored = secretArmored,
+                    passphrase = passphrase,
+                    signerPublicKeyRingsArmored = signerPublicArmored,
+                    smartCard = smartCardPort.takeIf { it.isAvailable() },
+                ),
+            )
+        }.first
 
     /**
      * Signs [data] with the given secret key.
      *
      * @param detachedBinary When `true`, produces a detached binary signature.
+     * @param inlineBinary When `true`, produces one-pass + literal + signature.
      */
     fun sign(
         data: ByteArray,
         secretArmored: ByteArray,
         passphrase: CharArray,
         detachedBinary: Boolean = false,
+        inlineBinary: Boolean = false,
     ) =
-        signer.sign(
-            SignRequest(
-                data = data,
-                secretKeyRingArmored = secretArmored,
-                passphrase = passphrase,
-                detachedBinary = detachedBinary,
-            ),
-        )
+        CryptoProgress.measure(CryptoOperation.SIGN) {
+            signer.sign(
+                SignRequest(
+                    data = data,
+                    secretKeyRingArmored = secretArmored,
+                    passphrase = passphrase,
+                    detachedBinary = detachedBinary,
+                    inlineBinary = inlineBinary,
+                    cleartext = !detachedBinary && !inlineBinary,
+                    smartCard = smartCardPort.takeIf { it.isAvailable() },
+                ),
+            )
+        }.first
 
     /**
      * Verifies a signature against candidate public keys.
@@ -149,24 +266,62 @@ class CryptoOperations @Inject constructor() {
         message: ByteArray? = null,
         binaryDocument: Boolean = false,
     ) =
-        verifier.verify(
-            VerifyRequest(
-                signedOrDetached = signedData,
-                detachedMessage = message,
-                publicKeyRingsArmored = publicArmored,
-                binaryDocument = binaryDocument,
-            ),
-        )
+        CryptoProgress.measure(CryptoOperation.VERIFY) {
+            verifier.verify(
+                VerifyRequest(
+                    signedOrDetached = signedData,
+                    detachedMessage = message,
+                    publicKeyRingsArmored = publicArmored,
+                    binaryDocument = binaryDocument,
+                ),
+            )
+        }.first
 
     /** Re-encrypts the secret key ring, replacing [oldPassphrase] with [newPassphrase]. */
     fun changePassphrase(secretArmored: ByteArray, oldPassphrase: CharArray, newPassphrase: CharArray): ByteArray =
-        passphraseChanger.changePassphrase(
-            ChangePassphraseRequest(
-                secretKeyRingArmored = secretArmored,
-                oldPassphrase = oldPassphrase,
-                newPassphrase = newPassphrase,
-            ),
-        )
+        CryptoProgress.measure(CryptoOperation.CHANGE_PASSPHRASE) {
+            passphraseChanger.changePassphrase(
+                ChangePassphraseRequest(
+                    secretKeyRingArmored = secretArmored,
+                    oldPassphrase = oldPassphrase,
+                    newPassphrase = newPassphrase,
+                    aeadProtect = true,
+                ),
+            )
+        }.first
+
+    /**
+     * If [secretArmored] still uses classic S2K, rewraps in place with Argon2+AEAD using the
+     * same [passphrase]. Returns the upgraded armored ring, or `null` when already modern.
+     */
+    fun upgradeSecretProtectionIfNeeded(secretArmored: ByteArray, passphrase: CharArray): ByteArray? {
+        if (!PgpRecipientCapabilities.needsAeadSecretUpgrade(secretArmored)) return null
+        val oldPass = passphrase.copyOf()
+        val newPass = passphrase.copyOf()
+        return try {
+            changePassphrase(secretArmored, oldPass, newPass)
+        } finally {
+            oldPass.fill('\u0000')
+            newPass.fill('\u0000')
+        }
+    }
+
+    /** Suspend passphrase rewrap (parallel S2K, no nested runBlocking). */
+    suspend fun changePassphraseSuspending(
+        secretArmored: ByteArray,
+        oldPassphrase: CharArray,
+        newPassphrase: CharArray,
+    ): ByteArray =
+        CryptoProgress.measureSuspend(CryptoOperation.CHANGE_PASSPHRASE) {
+            passphraseChanger.changePassphraseSuspending(
+                ChangePassphraseRequest(
+                    secretKeyRingArmored = secretArmored,
+                    oldPassphrase = oldPassphrase,
+                    newPassphrase = newPassphrase,
+                    aeadProtect = true,
+                ),
+            )
+        }.first
 
     /**
      * Adds a subkey of [subkeyType] to an existing secret key ring.
@@ -178,23 +333,34 @@ class CryptoOperations @Inject constructor() {
         passphrase: CharArray,
         subkeyType: SubkeyType,
         rsaBits: Int = 3072,
+        expirySeconds: Long = 0L,
     ): ByteArray =
-        subkeyAdder.addSubkey(
-            AddSubkeyRequest(
-                secretKeyRingArmored = secretArmored,
-                passphrase = passphrase,
-                subkeyType = subkeyType,
-                rsaBits = rsaBits,
-            ),
-        )
+        CryptoProgress.measure(CryptoOperation.ADD_SUBKEY) {
+            subkeyAdder.addSubkey(
+                AddSubkeyRequest(
+                    secretKeyRingArmored = secretArmored,
+                    passphrase = passphrase,
+                    subkeyType = subkeyType,
+                    rsaBits = rsaBits,
+                    expirySeconds = expirySeconds,
+                ),
+            )
+        }.first
 
-    /** Produces a revocation certificate for the secret key, with optional [reasonText]. */
-    fun generateRevocationCert(secretArmored: ByteArray, passphrase: CharArray, reasonText: String = ""): ByteArray =
+    fun generateRevocationCert(
+        secretArmored: ByteArray,
+        passphrase: CharArray,
+        reason: Byte = 0,
+        reasonText: String = "",
+        subkeyId: Long? = null,
+    ): ByteArray =
         revocationCertGenerator.generate(
             RevocationCertRequest(
                 secretKeyRingArmored = secretArmored,
                 passphrase = passphrase,
+                reason = reason,
                 reasonText = reasonText,
+                subkeyId = subkeyId,
             ),
         )
 
@@ -254,9 +420,30 @@ class CryptoOperations @Inject constructor() {
     fun symmetricDecrypt(ciphertext: ByteArray, password: CharArray): ByteArray =
         symmetricCipher.decrypt(SymmetricDecryptRequest(ciphertext, password))
 
-    /** Encrypts [plaintext] using the S/MIME engine. */
-    fun smimeEncrypt(plaintext: ByteArray): ByteArray = smimeEngine.encrypt(plaintext)
+    /** Encrypts [plaintext] to [recipientCerts] using CMS EnvelopedData. */
+    fun smimeEncrypt(plaintext: ByteArray, recipientCerts: List<java.security.cert.X509Certificate>): ByteArray =
+        smimeEngine.encrypt(plaintext, recipientCerts)
 
-    /** Decrypts [ciphertext] using the S/MIME engine. */
-    fun smimeDecrypt(ciphertext: ByteArray): ByteArray = smimeEngine.decrypt(ciphertext)
+    /** Decrypts CMS EnvelopedData with [privateKey]. */
+    fun smimeDecrypt(ciphertext: ByteArray, privateKey: java.security.PrivateKey): ByteArray =
+        smimeEngine.decrypt(ciphertext, privateKey)
+
+    /** CMS sign (attached). */
+    fun smimeSign(
+        content: ByteArray,
+        privateKey: java.security.PrivateKey,
+        certificate: java.security.cert.X509Certificate,
+    ): ByteArray = smimeEngine.sign(content, privateKey, certificate)
+
+    /** CMS verify. */
+    fun smimeVerify(
+        signedCms: ByteArray,
+        trustAnchors: List<java.security.cert.X509Certificate> = emptyList(),
+    ) = smimeEngine.verify(signedCms, trustAnchors)
+
+    /** Import PKCS#12 identities. */
+    fun smimeImportPkcs12(pkcs12: ByteArray, password: CharArray) =
+        smimeEngine.importPkcs12(pkcs12, password)
+
+    val smime: SmimeEngine get() = smimeEngine
 }

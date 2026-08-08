@@ -17,7 +17,7 @@ object PgpTestSupport {
     }
 
     fun generateRsa(userId: String, passphrase: CharArray, rsaBits: Int = 2048): GeneratedKeyRing =
-        KeyGenerator().generateKeyRing(
+        KeyGenerator().generateKeyRingBlocking(
             GenerateKeyRequest(
                 userId = userId,
                 passphrase = passphrase,
@@ -28,7 +28,7 @@ object PgpTestSupport {
 
     fun generateOrAssume(type: KeyAlgorithmType, userId: String, passphrase: CharArray): GeneratedKeyRing {
         return try {
-            KeyGenerator().generateKeyRing(
+            KeyGenerator().generateKeyRingBlocking(
                 GenerateKeyRequest(
                     userId = userId,
                     passphrase = passphrase,

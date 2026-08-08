@@ -149,8 +149,12 @@ fun M3ListCard(
         shape = MaterialTheme.shapes.medium,
         color = MaterialTheme.colorScheme.surfaceContainerHigh,
         tonalElevation = 1.dp,
-        content = content,
-    )
+    ) {
+        // Surface content is ColumnScope in Material3; wrap so callers can use any layout.
+        androidx.compose.foundation.layout.Box(modifier = Modifier.fillMaxWidth()) {
+            content()
+        }
+    }
 }
 
 /** Centered empty-state placeholder with an icon, [message] and optional [action]. */

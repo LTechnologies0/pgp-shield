@@ -20,7 +20,6 @@ import org.bouncycastle.openpgp.PGPSignature
 import org.bouncycastle.openpgp.PGPSignatureGenerator
 import org.bouncycastle.openpgp.PGPSignatureSubpacketGenerator
 import org.bouncycastle.openpgp.PGPUtil
-import org.bouncycastle.openpgp.operator.jcajce.JcaKeyFingerprintCalculator
 
 /**
  * Parameters for certifying a user ID on a target public key.
@@ -46,8 +45,6 @@ data class CertifyKeyResult(
 
 /** Certifies user IDs on third-party OpenPGP public keys. */
 class KeyCertifier {
-    private val fingerprintCalculator = JcaKeyFingerprintCalculator()
-
     init {
         BouncyCastleProviderHolder.ensureRegistered()
     }
@@ -108,11 +105,11 @@ class KeyCertifier {
 
     private fun loadSecretRing(armored: ByteArray): PGPSecretKeyRing =
         PGPUtil.getDecoderStream(ByteArrayInputStream(armored)).use { input ->
-            PGPObjectFactory(input, fingerprintCalculator).nextObject() as PGPSecretKeyRing
+            PGPObjectFactory(input, PgpFingerprints.calculator).nextObject() as PGPSecretKeyRing
         }
 
     private fun loadPublicRing(armored: ByteArray): PGPPublicKeyRing =
         PGPUtil.getDecoderStream(ByteArrayInputStream(armored)).use { input ->
-            PGPObjectFactory(input, fingerprintCalculator).nextObject() as PGPPublicKeyRing
+            PGPObjectFactory(input, PgpFingerprints.calculator).nextObject() as PGPPublicKeyRing
         }
 }

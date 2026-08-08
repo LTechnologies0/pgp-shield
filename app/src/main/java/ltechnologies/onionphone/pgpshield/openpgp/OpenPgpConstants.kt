@@ -50,4 +50,5 @@ object OpenPgpConstants {
     const val RESULT_DETACHED_SIGNATURE = "detached_signature"
     const val RESULT_SIGNATURE_MICALG = "signature_micalg"
     const val RESULT_SIGN_KEY_ID = "sign_key_id"
+    const val RESULT_SIGNATURE_VERIFIED = "signature_verified"
 }

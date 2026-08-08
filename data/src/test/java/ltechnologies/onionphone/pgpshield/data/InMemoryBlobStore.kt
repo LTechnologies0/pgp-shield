@@ -18,6 +18,8 @@ class InMemoryBlobStore : KeyBlobStore {
         blobs.remove(path)
     }
 
+    override fun ensureBlobPresent(path: String): Boolean = blobs.containsKey(path)
+
     private fun store(keyId: Long, suffix: String, data: ByteArray): String {
         val path = "mem://kr_$keyId$suffix"
         blobs[path] = data.copyOf()

@@ -7,8 +7,6 @@ package ltechnologies.onionphone.pgpshield.intent
 import android.content.Intent
 import android.net.Uri
 import android.os.Bundle
-import androidx.activity.ComponentActivity
-import androidx.activity.compose.setContent
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -32,8 +30,6 @@ import ltechnologies.onionphone.pgpshield.crypto.CryptoOperations
 import ltechnologies.onionphone.pgpshield.data.KeyRepository
 import ltechnologies.onionphone.pgpshield.data.SettingsRepository
 import ltechnologies.onionphone.pgpshield.ui.components.IntentFlowScaffold
-import ltechnologies.onionphone.pgpshield.ui.theme.PgpShieldTheme
-import ltechnologies.onionphone.pgpshield.util.WindowSecureHelper
 import javax.inject.Inject
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -47,7 +43,7 @@ import kotlinx.coroutines.withContext
  * a share chooser for interactive use.
  */
 @AndroidEntryPoint
-class EncryptFileActivity : ComponentActivity() {
+class EncryptFileActivity : LockedIntentActivity() {
     @Inject lateinit var cryptoOperations: CryptoOperations
     @Inject lateinit var keyRepository: KeyRepository
     @Inject lateinit var settingsRepository: SettingsRepository
@@ -55,11 +51,9 @@ class EncryptFileActivity : ComponentActivity() {
     /** Builds the encrypt UI and, in integration mode, auto-runs encryption. */
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        WindowSecureHelper.bind(this, settingsRepository)
-        val integrationMode = IntentResultWriter.isCallerIntegration(intent)
+                val integrationMode = IntentResultWriter.isCallerIntegration(intent)
         val fileName = intent.data?.lastPathSegment ?: getString(R.string.intent_default_file)
-        setContent {
-            PgpShieldTheme {
+        setVaultGatedContent(settingsRepository) {
                 var status by remember { mutableStateOf(getString(R.string.intent_status_ready_encrypt_fmt, fileName)) }
                 var error by remember { mutableStateOf<String?>(null) }
                 var busy by remember { mutableStateOf(false) }
@@ -125,7 +119,6 @@ class EncryptFileActivity : ComponentActivity() {
                         }
                     }
                 }
-            }
         }
     }
 

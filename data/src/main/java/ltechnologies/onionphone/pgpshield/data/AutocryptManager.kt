@@ -3,18 +3,26 @@ package ltechnologies.onionphone.pgpshield.data
 import android.content.Context
 import dagger.hilt.android.qualifiers.ApplicationContext
 import ltechnologies.onionphone.pgpshield.engine.KeyRingReader
+import ltechnologies.onionphone.pgpshield.engine.PgpAlgorithmPolicy
+import java.util.Base64
 import javax.inject.Inject
 import javax.inject.Singleton
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 
 /**
  * Parses and persists Autocrypt email-to-key mappings from message headers.
  *
  * Stores discovered `addr` → master key id associations in SharedPreferences when
  * valid `keydata` is present in `Autocrypt` or `Autocrypt-Gossip` headers.
+ * Imports the public ring into [KeyRepository] so encrypt lookups can resolve material.
+ * Honours [SettingsRepository.autocryptEnabled].
  */
 @Singleton
 class AutocryptManager @Inject constructor(
     @ApplicationContext context: Context,
+    private val settingsRepository: SettingsRepository,
+    private val keyRepository: KeyRepository,
 ) {
     private val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
     private val reader = KeyRingReader()
@@ -24,7 +32,8 @@ class AutocryptManager @Inject constructor(
      *
      * Accepts both canonical and lowercase header names for `Autocrypt` and `Autocrypt-Gossip`.
      */
-    fun storeFromHeaders(headers: Map<String, String>) {
+    suspend fun storeFromHeaders(headers: Map<String, String>) {
+        if (!settingsRepository.current().autocryptEnabled) return
         val gossip = headers["Autocrypt-Gossip"] ?: headers["autocrypt-gossip"]
         val direct = headers["Autocrypt"] ?: headers["autocrypt"]
         parseAndStore(gossip)
@@ -34,8 +43,9 @@ class AutocryptManager @Inject constructor(
     /**
      * Processes raw header lines, extracting Autocrypt and Autocrypt-Gossip values.
      */
-    fun storeFromHeaderLines(lines: Iterable<String>) {
-        lines.forEach { line ->
+    suspend fun storeFromHeaderLines(lines: Iterable<String>) {
+        if (!settingsRepository.current().autocryptEnabled) return
+        for (line in lines) {
             val trimmed = line.trim()
             when {
                 trimmed.startsWith("Autocrypt-Gossip:", ignoreCase = true) ->
@@ -48,6 +58,7 @@ class AutocryptManager @Inject constructor(
 
     /**
      * Returns the master key id previously associated with [email], if any.
+     * Lookup remains available even when Autocrypt ingest is disabled so existing peers work.
      */
     fun lookup(email: String): Long? =
         prefs.getLong(emailKey(email), -1L).takeIf { it >= 0L }
@@ -59,7 +70,12 @@ class AutocryptManager @Inject constructor(
             k.removePrefix(KEY_PREFIX) to v
         }.toMap()
 
-    private fun parseAndStore(headerValue: String?) {
+    /** Removes a single peer mapping. */
+    fun remove(email: String) {
+        prefs.edit().remove(emailKey(email)).apply()
+    }
+
+    private suspend fun parseAndStore(headerValue: String?) {
         if (headerValue.isNullOrBlank()) return
         val params = headerValue.split(';').associate { part ->
             val kv = part.trim().split('=', limit = 2)
@@ -69,16 +85,21 @@ class AutocryptManager @Inject constructor(
         val email = params["addr"]?.takeIf { it.isNotBlank() } ?: return
         val keydata = params["keydata"]?.takeIf { it.isNotBlank() } ?: return
         runCatching {
-            val info = if (keydata.contains("BEGIN PGP")) {
-                reader.readPublicKeyRing(keydata.toByteArray(Charsets.UTF_8).inputStream())
-            } else {
-                // Autocrypt keydata is base64 of the binary transferable public key.
-                // Prefer binary parse over hand-rolled armor (armor needs a blank
-                // line after headers; omitting it breaks Bouncy Castle / GnuPG).
-                val binary = java.util.Base64.getDecoder().decode(keydata.replace(Regex("\\s+"), ""))
-                reader.readPublicKeyRing(binary.inputStream())
+            withContext(Dispatchers.IO) {
+                val keyBytes = if (keydata.contains("BEGIN PGP")) {
+                    keydata.toByteArray(Charsets.UTF_8)
+                } else {
+                    // Autocrypt keydata is base64 of the binary transferable public key.
+                    Base64.getDecoder().decode(keydata.replace(Regex("\\s+"), ""))
+                }
+                val info = reader.readPublicKeyRing(keyBytes.inputStream())
+                PgpAlgorithmPolicy.validateKeyRing(info, allowRevoked = false, allowExpired = false)
+                // Never replace an existing secret ring with a public-only Autocrypt import.
+                if (keyRepository.getArmoredSecret(info.masterKeyId) == null) {
+                    keyRepository.importKeyRing(keyBytes, secret = false)
+                }
+                prefs.edit().putLong(emailKey(email), info.masterKeyId).apply()
             }
-            prefs.edit().putLong(emailKey(email), info.masterKeyId).apply()
         }
     }
 

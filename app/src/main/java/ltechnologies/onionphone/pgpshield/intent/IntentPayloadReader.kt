@@ -11,7 +11,6 @@ import android.net.Uri
 import android.os.Build
 import androidx.activity.ComponentActivity
 import ltechnologies.onionphone.pgpshield.engine.PgpIo
-import ltechnologies.onionphone.pgpshield.util.DebugAgentLog
 import timber.log.Timber
 
 /** Resolves and reads intent payloads, preferring extras then URIs. */
@@ -46,46 +45,11 @@ object IntentPayloadReader {
      * returning the bytes or `null` when no readable payload is present.
      */
     fun readBytes(intent: Intent, activity: ComponentActivity): ByteArray? {
-        val uri = resolvePayloadUri(intent) ?: run {
-            // #region agent log
-            DebugAgentLog.log(
-                location = "IntentPayloadReader.kt:readBytes",
-                message = "no payload URI in intent",
-                data = mapOf(
-                    "action" to intent.action,
-                    "hasData" to (intent.data != null),
-                    "hasClipData" to (intent.clipData != null),
-                    "hasExtraStream" to intent.hasExtra(Intent.EXTRA_STREAM),
-                ),
-                hypothesisId = "B",
-            )
-            // #endregion
-            return null
-        }
+        val uri = resolvePayloadUri(intent) ?: return null
         return try {
-            val bytes = activity.contentResolver.openInputStream(uri)?.use { PgpIo.readLimited(it) }
-            // #region agent log
-            DebugAgentLog.log(
-                location = "IntentPayloadReader.kt:readBytes",
-                message = "payload read",
-                data = mapOf(
-                    "uri" to uri.toString(),
-                    "byteCount" to (bytes?.size ?: 0),
-                ),
-                hypothesisId = "B",
-            )
-            // #endregion
-            bytes
+            activity.contentResolver.openInputStream(uri)?.use { PgpIo.readLimited(it) }
         } catch (e: Exception) {
             Timber.e(e, "Intent bytes read failed")
-            // #region agent log
-            DebugAgentLog.log(
-                location = "IntentPayloadReader.kt:readBytes",
-                message = "payload read failed",
-                data = mapOf("uri" to uri.toString(), "error" to (e.message ?: e.javaClass.simpleName)),
-                hypothesisId = "B",
-            )
-            // #endregion
             null
         }
     }

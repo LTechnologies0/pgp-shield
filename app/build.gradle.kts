@@ -14,8 +14,8 @@ android {
         applicationId = "ltechnologies.onionphone.pgpshield"
         minSdk = libs.versions.minSdk.get().toInt()
         targetSdk = libs.versions.targetSdk.get().toInt()
-        versionCode = 4
-        versionName = "1.0.3"
+        versionCode = 5
+        versionName = "1.0.4"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 
@@ -51,6 +51,10 @@ android {
     }
 
     packaging {
+        jniLibs {
+            // Equivalent to android:extractNativeLibs="false" (AGP prefers DSL).
+            useLegacyPackaging = false
+        }
         resources {
             excludes += "/META-INF/{AL2.0,LGPL2.1}"
             excludes += "META-INF/versions/9/OSGI-INF/MANIFEST.MF"
@@ -97,6 +101,14 @@ dependencies {
     androidTestImplementation(libs.androidx.test.ext.junit)
     androidTestImplementation(libs.androidx.compose.ui.test.junit4)
     androidTestImplementation(project(":pgp-engine"))
+    // Align androidTest transitive with AGP/lock constraints (junit 1.3 pulls 1.2.0).
+    androidTestImplementation("androidx.concurrent:concurrent-futures:1.2.0")
+}
+
+configurations.configureEach {
+    resolutionStrategy {
+        force("androidx.concurrent:concurrent-futures:1.2.0")
+    }
 }
 
 apply(from = rootProject.file("gradle/release-signing.gradle"))
