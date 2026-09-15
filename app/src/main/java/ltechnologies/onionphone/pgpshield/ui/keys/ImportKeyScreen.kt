@@ -76,16 +76,25 @@ fun ImportKeyScreen(
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val importFileReadFailed = stringResource(R.string.import_file_read_failed)
+    val importUnrecognized = stringResource(R.string.keys_import_unrecognized_file)
     val filePicker = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri ->
         if (uri == null) return@rememberLauncherForActivityResult
         scope.launch {
             try {
                 val bytes = IntentIoHelper.readUriBytes(context, uri)
-                val text = String(bytes, Charsets.UTF_8)
+                val text = runCatching { String(bytes, Charsets.UTF_8) }.getOrNull().orEmpty()
                 if (text.contains("BEGIN PGP")) {
                     armored = text
                     viewModel.clearError()
+                    return@launch
                 }
+                val secret = ArmoredKeyDetector.isSecretMaterial(bytes)
+                if (secret == null) {
+                    viewModel.reportError(importUnrecognized)
+                    return@launch
+                }
+                // Kleopatra/GnuPG binary .gpg/.pgp key rings — import without requiring armor.
+                viewModel.importFromBytes(bytes, secret, onBack)
             } catch (e: Exception) {
                 viewModel.reportError(e.message ?: importFileReadFailed)
             }
@@ -95,6 +104,12 @@ fun ImportKeyScreen(
     LaunchedEffect(armored) {
         detected = ArmoredKeyDetector.isSecretBlock(armored)
         detected?.let { isSecret = it }
+    }
+
+    val typeLabel = when (detected) {
+        true -> stringResource(R.string.keys_import_secret_detected)
+        false -> stringResource(R.string.keys_import_public_detected)
+        null -> stringResource(R.string.keys_import_paste_hint)
     }
 
     SecureScreen {
@@ -114,7 +129,7 @@ fun ImportKeyScreen(
                         style = MaterialTheme.typography.bodyMedium,
                     )
                     Text(
-                        ArmoredKeyDetector.label(armored),
+                        typeLabel,
                         style = MaterialTheme.typography.labelMedium,
                         color = when (detected) {
                             true -> MaterialTheme.colorScheme.tertiary

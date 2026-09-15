@@ -135,13 +135,14 @@ class EncryptFolderActivity : LockedIntentActivity() {
 
     private suspend fun encryptFolderArchive(archiveName: String) {
         val named = readNamedFiles()
-        require(named.isNotEmpty()) { "No files to encrypt" }
-        val public = IntentIoHelper.loadEncryptPublicKey(keyRepository, settingsRepository)
+        require(named.isNotEmpty()) { getString(R.string.intent_no_files_to_encrypt) }
+        val public = IntentIoHelper.loadEncryptPublicKey(this, keyRepository, settingsRepository, intent)
+        val asciiArmor = IntentIoHelper.readOkcAsciiArmor(intent, default = false)
         val result = withContext(Dispatchers.Default) {
-            cryptoOperations.encryptTar(named, listOf(public), asciiArmor = false)
+            cryptoOperations.encryptTar(named, listOf(public), asciiArmor = asciiArmor, allowMdcDegrade = true)
         }
         val outputDir = intent.getStringExtra(PgpIntentActions.EXTRA_OUTPUT_PATH)
-            ?: error("Missing output path")
+            ?: error(getString(R.string.intent_missing_output_path))
         val outFile = File(outputDir, archiveName)
         withContext(Dispatchers.IO) { outFile.writeBytes(result.ciphertext) }
     }
@@ -149,12 +150,12 @@ class EncryptFolderActivity : LockedIntentActivity() {
     private suspend fun readNamedFiles(): List<NamedFile> = withContext(Dispatchers.IO) {
         val uris = readStreamUris()
         val paths = intent.getStringArrayListExtra(PgpIntentActions.EXTRA_RELATIVE_PATHS).orEmpty()
-        require(uris.size == paths.size) { "URI / path count mismatch" }
+        require(uris.size == paths.size) { getString(R.string.intent_uri_path_count_mismatch) }
         kotlinx.coroutines.coroutineScope {
             uris.mapIndexed { index, uri ->
                 async(Dispatchers.IO) {
                     val bytes = contentResolver.openInputStream(uri)?.use { PgpIo.readLimited(it) }
-                        ?: error("Could not read ${paths[index]}")
+                        ?: error(getString(R.string.intent_could_not_read_path_fmt, paths[index]))
                     NamedFile(paths[index], bytes)
                 }
             }.map { it.await() }

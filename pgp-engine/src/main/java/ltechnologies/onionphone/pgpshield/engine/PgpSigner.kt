@@ -37,13 +37,22 @@ data class SignRequest(
     val detachedBinary: Boolean = false,
     /** When `true`, emit one-pass + literal + signature (binary document). */
     val inlineBinary: Boolean = false,
+    /**
+     * Armor detached / inline output. Cleartext signatures are always armored.
+     * OpenPGP API DETACHED_SIGN defaults to binary unless EXTRA_REQUEST_ASCII_ARMOR.
+     */
+    val asciiArmor: Boolean = true,
     /** When set and [SmartCardPort.ownsKey] for the signing key, sign via the card. */
     val smartCard: SmartCardPort? = null,
+    /** Optional ASCII-armor headers when output is armored. */
+    val customArmorHeaders: Map<String, String> = emptyMap(),
 )
 
 /** Armored signature output from [PgpSigner.sign]. */
 data class SignResult(
     val output: ByteArray,
+    /** OpenPGP hash algorithm tag used for the signature (for micalg / UI). */
+    val hashAlgorithm: Int,
 )
 
 /** Signs messages and produces cleartext or detached OpenPGP signatures. */
@@ -87,23 +96,35 @@ class PgpSigner {
         val sigGen = PGPSignatureGenerator(signerBuilder)
         if (request.inlineBinary) {
             val binary = buildInlineBinary(request.data, sigGen, privateKey)
+            if (!request.asciiArmor) {
+                return SignResult(output = binary, hashAlgorithm = hashAlgorithm)
+            }
             CryptoProgress.stage(CryptoStage.ARMOR)
             val armored = ByteArrayOutputStream().use { out ->
-                ArmoredOutputStream(out).use { armor -> armor.write(binary) }
+                ArmoredOutputStream(out).use { armor ->
+                    ArmorHeaders.apply(armor, request.customArmorHeaders)
+                    armor.write(binary)
+                }
                 out.toByteArray()
             }
-            return SignResult(output = armored)
+            return SignResult(output = armored, hashAlgorithm = hashAlgorithm)
         }
         if (request.detachedBinary) {
             sigGen.init(PGPSignature.BINARY_DOCUMENT, privateKey)
             sigGen.update(request.data)
             val signature = sigGen.generate()
+            if (!request.asciiArmor) {
+                return SignResult(output = signature.encoded, hashAlgorithm = hashAlgorithm)
+            }
             CryptoProgress.stage(CryptoStage.ARMOR)
             val armored = ByteArrayOutputStream().use { out ->
-                ArmoredOutputStream(out).use { armor -> signature.encode(armor) }
+                ArmoredOutputStream(out).use { armor ->
+                    ArmorHeaders.apply(armor, request.customArmorHeaders)
+                    signature.encode(armor)
+                }
                 out.toByteArray()
             }
-            return SignResult(output = armored)
+            return SignResult(output = armored, hashAlgorithm = hashAlgorithm)
         }
 
         sigGen.init(PGPSignature.CANONICAL_TEXT_DOCUMENT, privateKey)
@@ -123,6 +144,7 @@ class PgpSigner {
 
         val armored = ByteArrayOutputStream().use { out ->
             ArmoredOutputStream(out).use { armor ->
+                ArmorHeaders.apply(armor, request.customArmorHeaders)
                 armor.beginClearText(hashAlgorithm)
                 armor.write(displayWithNl)
                 armor.endClearText()
@@ -130,7 +152,7 @@ class PgpSigner {
             }
             out.toByteArray()
         }
-        return SignResult(output = armored)
+        return SignResult(output = armored, hashAlgorithm = hashAlgorithm)
     }
 
     /** One-pass signature packet + literal + signature (binary document). */

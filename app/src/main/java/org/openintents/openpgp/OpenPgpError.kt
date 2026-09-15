@@ -55,6 +55,8 @@ class OpenPgpError(
         const val INCOMPATIBLE_API_VERSIONS = 1
         const val NO_OR_WRONG_PASSPHRASE = 2
         const val NO_USER_IDS = 3
+        /** Opportunistic encrypt: no usable recipient keys (K-9 / FairEmail). */
+        const val OPPORTUNISTIC_MISSING_KEYS = 4
 
         @JvmField
         val CREATOR = object : Parcelable.Creator<OpenPgpError> {

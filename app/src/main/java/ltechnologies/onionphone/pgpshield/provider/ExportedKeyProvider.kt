@@ -17,6 +17,7 @@ import android.provider.BaseColumns
 import dagger.hilt.android.EntryPointAccessors
 import ltechnologies.onionphone.pgpshield.PgpShieldApplication
 import ltechnologies.onionphone.pgpshield.data.KeyRepository
+import ltechnologies.onionphone.pgpshield.data.KeySummary
 import ltechnologies.onionphone.pgpshield.data.db.UserIdDao
 import ltechnologies.onionphone.pgpshield.di.ProviderEntryPoint
 import kotlinx.coroutines.Dispatchers
@@ -29,6 +30,7 @@ import kotlinx.coroutines.runBlocking
 class ExportedKeyProvider : ContentProvider() {
     private lateinit var userIdDao: UserIdDao
     private lateinit var keyRepository: KeyRepository
+    private lateinit var appLockManager: ltechnologies.onionphone.pgpshield.security.AppLockManager
     private val matcher = UriMatcher(UriMatcher.NO_MATCH).apply {
         addURI(AUTHORITY, PATH_EMAIL_STATUS, MATCH_EMAIL_STATUS)
         addURI(AUTHORITY, "$PATH_EMAIL_STATUS/*", MATCH_EMAIL_STATUS)
@@ -40,12 +42,14 @@ class ExportedKeyProvider : ContentProvider() {
         val entryPoint = EntryPointAccessors.fromApplication(app, ProviderEntryPoint::class.java)
         userIdDao = entryPoint.userIdDao()
         keyRepository = entryPoint.keyRepository()
+        appLockManager = entryPoint.appLockManager()
         return true
     }
 
     /**
      * Returns a cursor of key status rows for the email addresses supplied in
      * [selectionArgs]; only the `email_status` URI is supported.
+     * Refuses queries while the app vault is locked (no metadata leakage when locked).
      */
     override fun query(
         uri: Uri,
@@ -55,6 +59,10 @@ class ExportedKeyProvider : ContentProvider() {
         sortOrder: String?,
     ): Cursor? {
         if (matcher.match(uri) != MATCH_EMAIL_STATUS) return null
+        if (!appLockManager.isUnlocked) {
+            // Empty success cursor — do not leak key presence while locked.
+            return MatrixCursor(projection ?: DEFAULT_PROJECTION)
+        }
         val emails = selectionArgs?.toList().orEmpty()
         val rows = runBlocking(Dispatchers.IO) {
             if (emails.isEmpty()) {
@@ -64,14 +72,14 @@ class ExportedKeyProvider : ContentProvider() {
                 emails.flatMap { email ->
                     userIdDao.findByUserIdFragment(email).mapNotNull { entity ->
                         val summary = keysById[entity.masterKeyId] ?: return@mapNotNull null
-                        // Never advertise revoked or Never-trusted keys to third-party apps.
-                        if (summary.isRevoked || summary.trustLevel == TRUST_NEVER) {
+                        // Align with encrypt gate: skip revoked / Never / expired / weak.
+                        if (!keyRepository.isEncryptRecipientAllowed(summary.masterKeyId)) {
                             return@mapNotNull null
                         }
                         Row(
                             emailAddress = email,
                             userId = entity.userId,
-                            status = if (summary.trustLevel == TRUST_FULL) {
+                            status = if (summary.trustLevel == KeySummary.TRUST_FULL) {
                                 KEY_STATUS_VERIFIED
                             } else {
                                 KEY_STATUS_UNVERIFIED
@@ -131,12 +139,6 @@ class ExportedKeyProvider : ContentProvider() {
 
         const val KEY_STATUS_UNVERIFIED = 1
         const val KEY_STATUS_VERIFIED = 2
-
-        /** Matches [KeySummary.trustLevel] full trust. */
-        private const val TRUST_FULL = 2
-
-        /** Matches [KeySummary.TRUST_NEVER]. */
-        private const val TRUST_NEVER = 3
 
         const val COLUMN_EMAIL_ADDRESS = "email_address"
         const val COLUMN_USER_ID = "user_id"

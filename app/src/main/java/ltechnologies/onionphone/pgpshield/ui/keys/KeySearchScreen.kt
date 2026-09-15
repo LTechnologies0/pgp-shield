@@ -4,6 +4,7 @@ package ltechnologies.onionphone.pgpshield.ui.keys
  * Key discovery: keyserver browse-then-import + WKD lookup.
  */
 
+import android.content.Context
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -30,6 +31,7 @@ import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import dagger.hilt.android.lifecycle.HiltViewModel
+import dagger.hilt.android.qualifiers.ApplicationContext
 import javax.inject.Inject
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -44,6 +46,7 @@ import ltechnologies.onionphone.pgpshield.data.SettingsRepository
 import ltechnologies.onionphone.pgpshield.data.WkdClient
 import ltechnologies.onionphone.pgpshield.engine.KeyRingReader
 import ltechnologies.onionphone.pgpshield.ui.components.AdaptiveContentWidth
+import ltechnologies.onionphone.pgpshield.ui.components.DestructiveConfirmDialog
 import ltechnologies.onionphone.pgpshield.ui.components.M3ListCard
 import ltechnologies.onionphone.pgpshield.ui.components.ScreenScaffold
 import ltechnologies.onionphone.pgpshield.ui.components.formatKeyId
@@ -71,6 +74,7 @@ class KeySearchViewModel @Inject constructor(
     private val wkdClient: WkdClient,
     private val keyRepository: KeyRepository,
     private val settingsRepository: SettingsRepository,
+    @ApplicationContext private val context: Context,
 ) : ViewModel() {
     private val reader = KeyRingReader()
     private val _uiState = MutableStateFlow(KeySearchUiState())
@@ -86,7 +90,9 @@ class KeySearchViewModel @Inject constructor(
             _uiState.value = _uiState.value.copy(isBusy = true, error = null, hits = emptyList(), status = null)
             try {
                 val settings = settingsRepository.current()
-                if (!settings.keyserverLookupEnabled) error("Keyserver lookup is disabled in Settings")
+                if (!settings.keyserverLookupEnabled) {
+                    error(context.getString(R.string.keys_search_keyserver_disabled))
+                }
                 val armored = withContext(Dispatchers.IO) {
                     keyserverClient.fetchKey(settings.keyserverUrl, _uiState.value.query.trim())
                 }
@@ -101,13 +107,15 @@ class KeySearchViewModel @Inject constructor(
                             keyId = info.masterKeyId,
                             fingerprint = info.fingerprint,
                             armored = armored,
-                            source = "keyserver",
+                            source = context.getString(R.string.keys_search_source_keyserver),
                         ),
                     ),
-                    status = "Found key — review then import",
+                    status = context.getString(R.string.keys_search_found_keyserver),
                 )
             } catch (e: Exception) {
-                _uiState.value = _uiState.value.copy(error = e.message ?: "Search failed")
+                _uiState.value = _uiState.value.copy(
+                    error = e.message ?: context.getString(R.string.keys_search_failed),
+                )
             } finally {
                 _uiState.value = _uiState.value.copy(isBusy = false)
             }
@@ -132,13 +140,15 @@ class KeySearchViewModel @Inject constructor(
                             keyId = info.masterKeyId,
                             fingerprint = info.fingerprint,
                             armored = armored,
-                            source = "WKD",
+                            source = context.getString(R.string.keys_search_source_wkd),
                         ),
                     ),
-                    status = "Found via WKD — review then import",
+                    status = context.getString(R.string.keys_search_found_wkd),
                 )
             } catch (e: Exception) {
-                _uiState.value = _uiState.value.copy(error = e.message ?: "WKD failed")
+                _uiState.value = _uiState.value.copy(
+                    error = e.message ?: context.getString(R.string.keys_search_wkd_failed),
+                )
             } finally {
                 _uiState.value = _uiState.value.copy(isBusy = false)
             }
@@ -152,9 +162,13 @@ class KeySearchViewModel @Inject constructor(
                 withContext(Dispatchers.Default) {
                     keyRepository.importKeyRing(hit.armored, secret = false)
                 }
-                _uiState.value = _uiState.value.copy(status = "Imported ${hit.fingerprint}")
+                _uiState.value = _uiState.value.copy(
+                    status = context.getString(R.string.keys_search_imported_fmt, hit.fingerprint),
+                )
             } catch (e: Exception) {
-                _uiState.value = _uiState.value.copy(error = e.message ?: "Import failed")
+                _uiState.value = _uiState.value.copy(
+                    error = e.message ?: context.getString(R.string.keys_search_import_failed),
+                )
             } finally {
                 _uiState.value = _uiState.value.copy(isBusy = false)
             }
@@ -170,6 +184,7 @@ fun KeySearchScreen(
 ) {
     val state by viewModel.uiState.collectAsState()
     var query by remember { mutableStateOf("") }
+    var pendingImport by remember { mutableStateOf<KeyserverHit?>(null) }
 
     SecureScreen {
         ScreenScaffold(
@@ -226,7 +241,7 @@ fun KeySearchScreen(
                     }
                     LazyColumn(modifier = Modifier.padding(top = 8.dp)) {
                         items(state.hits, key = { it.fingerprint }) { hit ->
-                            M3ListCard(onClick = { viewModel.importHit(hit) }) {
+                            M3ListCard(onClick = { pendingImport = hit }) {
                                 Column(modifier = Modifier.padding(16.dp)) {
                                     Text(hit.userId ?: formatKeyId(hit.keyId), style = MaterialTheme.typography.titleMedium)
                                     Text(hit.fingerprint, style = MaterialTheme.typography.bodySmall)
@@ -242,5 +257,27 @@ fun KeySearchScreen(
                 }
             }
         }
+
+        val confirmHit = pendingImport
+        DestructiveConfirmDialog(
+            visible = confirmHit != null,
+            title = stringResource(R.string.keys_search_confirm_import_title),
+            message = if (confirmHit != null) {
+                stringResource(
+                    R.string.keys_search_confirm_import_message,
+                    confirmHit.userId ?: stringResource(R.string.common_unknown),
+                    confirmHit.fingerprint,
+                )
+            } else {
+                ""
+            },
+            confirmLabel = stringResource(R.string.keys_search_confirm_import),
+            onDismiss = { pendingImport = null },
+            onConfirm = {
+                val hit = pendingImport
+                pendingImport = null
+                if (hit != null) viewModel.importHit(hit)
+            },
+        )
     }
 }

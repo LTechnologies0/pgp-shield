@@ -13,19 +13,44 @@ import kotlinx.coroutines.withContext
 /**
  * Parses and persists Autocrypt email-to-key mappings from message headers.
  *
- * Stores discovered `addr` → master key id associations in SharedPreferences when
- * valid `keydata` is present in `Autocrypt` or `Autocrypt-Gossip` headers.
+ * Stores discovered `addr` → master key id associations in EncryptedSharedPreferences
+ * (StrongBox-preferred MasterKey) when valid `keydata` is present in Autocrypt headers.
  * Imports the public ring into [KeyRepository] so encrypt lookups can resolve material.
  * Honours [SettingsRepository.autocryptEnabled].
  */
 @Singleton
 class AutocryptManager @Inject constructor(
-    @ApplicationContext context: Context,
+    @ApplicationContext private val context: Context,
     private val settingsRepository: SettingsRepository,
     private val keyRepository: KeyRepository,
 ) {
-    private val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+    private val prefs by lazy { openSecurePrefs() }
     private val reader = KeyRingReader()
+
+    private fun openSecurePrefs(): android.content.SharedPreferences {
+        val (secure, _) = SecurePrefs.createOrReset(context, PREFS_NAME_SECURE)
+        migratePlaintextIfNeeded(secure)
+        return secure
+    }
+
+    /** One-shot copy from legacy plaintext prefs into Keystore-backed EncryptedSharedPreferences. */
+    private fun migratePlaintextIfNeeded(secure: android.content.SharedPreferences) {
+        val legacy = context.getSharedPreferences(PREFS_NAME_LEGACY, Context.MODE_PRIVATE)
+        val all = legacy.all
+        if (all.isEmpty()) return
+        val editor = secure.edit()
+        for ((key, value) in all) {
+            when (value) {
+                is Long -> editor.putLong(key, value)
+                is Int -> editor.putLong(key, value.toLong())
+                is String -> editor.putString(key, value)
+                is Boolean -> editor.putBoolean(key, value)
+            }
+        }
+        editor.apply()
+        legacy.edit().clear().apply()
+        timber.log.Timber.i("Migrated %d Autocrypt prefs into EncryptedSharedPreferences", all.size)
+    }
 
     /**
      * Processes Autocrypt headers from a map (e.g. MIME header names to values).
@@ -63,6 +88,41 @@ class AutocryptManager @Inject constructor(
     fun lookup(email: String): Long? =
         prefs.getLong(emailKey(email), -1L).takeIf { it >= 0L }
 
+    /**
+     * Imports Autocrypt peer key material from the OpenPGP API
+     * (`EXTRA_AUTOCRYPT_PEER_UPDATE` / `ACTION_UPDATE_AUTOCRYPT_PEER`).
+     *
+     * @return Master key id when imported or already present; `null` if skipped/failed.
+     */
+    suspend fun storePeerKeyData(
+        email: String,
+        keyData: ByteArray?,
+        preferMutual: Boolean = false,
+    ): Long? {
+        if (!settingsRepository.current().autocryptEnabled) return lookup(email)
+        if (keyData == null || keyData.isEmpty()) return lookup(email)
+        val normalized = email.trim().lowercase()
+        if (normalized.isEmpty() || !normalized.contains('@')) return null
+        return runCatching {
+            withContext(Dispatchers.IO) {
+                val info = reader.readPublicKeyRing(keyData.inputStream())
+                PgpAlgorithmPolicy.validateKeyRing(info, allowRevoked = false, allowExpired = false)
+                if (keyRepository.getArmoredSecret(info.masterKeyId) == null) {
+                    keyRepository.importKeyRing(keyData, secret = false)
+                }
+                prefs.edit()
+                    .putLong(emailKey(normalized), info.masterKeyId)
+                    .putBoolean(preferKey(normalized), preferMutual)
+                    .apply()
+                info.masterKeyId
+            }
+        }.getOrNull()
+    }
+
+    /** True when the peer last advertised Autocrypt prefer-encrypt=mutual. */
+    fun prefersMutual(email: String): Boolean =
+        prefs.getBoolean(preferKey(email.trim().lowercase()), false)
+
     /** Returns all stored email → key id mappings. */
     fun allMappings(): Map<String, Long> =
         prefs.all.mapNotNull { (k, v) ->
@@ -84,6 +144,10 @@ class AutocryptManager @Inject constructor(
         }
         val email = params["addr"]?.takeIf { it.isNotBlank() } ?: return
         val keydata = params["keydata"]?.takeIf { it.isNotBlank() } ?: return
+        // Autocrypt Level 1: only type=1 (or omitted, treated as 1). Ignore gossip/other.
+        val type = params["type"]
+        if (type != null && type != "1") return
+        val preferMutual = params["prefer-encrypt"].equals("mutual", ignoreCase = true)
         runCatching {
             withContext(Dispatchers.IO) {
                 val keyBytes = if (keydata.contains("BEGIN PGP")) {
@@ -98,15 +162,22 @@ class AutocryptManager @Inject constructor(
                 if (keyRepository.getArmoredSecret(info.masterKeyId) == null) {
                     keyRepository.importKeyRing(keyBytes, secret = false)
                 }
-                prefs.edit().putLong(emailKey(email), info.masterKeyId).apply()
+                prefs.edit()
+                    .putLong(emailKey(email), info.masterKeyId)
+                    .putBoolean(preferKey(email), preferMutual)
+                    .apply()
             }
         }
     }
 
     private fun emailKey(email: String) = KEY_PREFIX + email.lowercase()
 
+    private fun preferKey(email: String) = PREFER_PREFIX + email.lowercase()
+
     companion object {
-        private const val PREFS_NAME = "pgp_shield_autocrypt"
+        private const val PREFS_NAME_LEGACY = "pgp_shield_autocrypt"
+        private const val PREFS_NAME_SECURE = "pgp_shield_autocrypt_enc"
         private const val KEY_PREFIX = "email:"
+        private const val PREFER_PREFIX = "prefer_mutual:"
     }
 }

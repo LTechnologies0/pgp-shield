@@ -50,6 +50,24 @@ class KeyRingReader {
     }
 
     /**
+     * Classifies raw key [bytes] (ASCII armor or binary).
+     *
+     * @return `true` for a secret key ring, `false` for a public key ring,
+     *   or `null` when the payload is not a recognizable OpenPGP key ring.
+     */
+    fun detectSecret(bytes: ByteArray): Boolean? = runCatching {
+        PGPUtil.getDecoderStream(bytes.inputStream()).use { decoder ->
+            val factory = org.bouncycastle.openpgp.PGPObjectFactory(decoder, PgpFingerprints.calculator)
+            when (factory.nextObject()) {
+                is PGPSecretKeyRing -> true
+                is PGPPublicKeyRing -> false
+                else -> null
+            }
+        }
+    }.getOrNull()
+
+
+    /**
      * Parses an armored key ring string.
      *
      * @param secret When `true`, expect a secret key ring; otherwise public.

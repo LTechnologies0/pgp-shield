@@ -87,18 +87,17 @@ class DecryptFileActivity : LockedIntentActivity() {
                                 scope.launch {
                                     try {
                                         val bytes = IntentIoHelper.readBytes(intent, this@DecryptFileActivity)
-                                            ?: error("Could not read file from intent")
-                                        val secret = IntentIoHelper.loadDecryptSecretKey(keyRepository, settingsRepository)
+                                            ?: error(getString(R.string.intent_could_not_read_file))
+                                        val secret = IntentIoHelper.loadDecryptSecretKey(this@DecryptFileActivity, keyRepository, settingsRepository)
                                         val passChars = passphrase.takeIf { it.isNotBlank() }?.toCharArray()
-                                            ?: error("Enter passphrase")
+                                            ?: error(getString(R.string.intent_enter_passphrase))
                                         pass = passChars
                                         val decrypted = withContext(Dispatchers.Default) {
                                             cryptoOperations.decrypt(bytes, secret, passChars)
                                         }
                                         val sourcePaths = intent.getStringArrayListExtra(PgpIntentActions.EXTRA_SOURCE_PATHS)
                                         if (!sourcePaths.isNullOrEmpty()) {
-                                            val outFile = IntentResultWriter.writeDecryptedForCaller(
-                                                intent,
+                                            val outFile = IntentResultWriter.writeDecryptedForCaller(this@DecryptFileActivity, intent,
                                                 sourcePaths.first(),
                                                 decrypted.plaintext,
                                             )

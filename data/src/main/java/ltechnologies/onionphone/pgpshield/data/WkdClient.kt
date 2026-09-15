@@ -25,8 +25,10 @@ class WkdClient @Inject constructor() {
         val local = trimmed.substringBefore('@')
         val domain = trimmed.substringAfter('@')
         val localHash = zBase32(sha1(local.toByteArray(Charsets.UTF_8)))
-        val advanced = "https://openpgpkey.$domain/.well-known/openpgpkey/$domain/hu/$localHash"
-        val direct = "https://$domain/.well-known/openpgpkey/hu/$localHash"
+        // RFC 7929 / draft-koch: direct (and commonly advanced) URLs include ?l=<local-part>
+        val localQuery = "?l=" + java.net.URLEncoder.encode(local, Charsets.UTF_8.name())
+        val advanced = "https://openpgpkey.$domain/.well-known/openpgpkey/$domain/hu/$localHash$localQuery"
+        val direct = "https://$domain/.well-known/openpgpkey/hu/$localHash$localQuery"
         return runCatching { fetchUrl(advanced) }
             .recoverCatching { fetchUrl(direct) }
             .getOrElse { throw PgpException("WKD lookup failed for $email: ${it.message}", cause = it) }

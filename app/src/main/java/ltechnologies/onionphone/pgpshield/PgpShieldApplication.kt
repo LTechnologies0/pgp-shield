@@ -1,5 +1,7 @@
 package ltechnologies.onionphone.pgpshield
 
+import ltechnologies.onionphone.pgpshield.R
+
 /**
  * Application entry point and process-wide bootstrap for PGP Shield.
  *
@@ -15,6 +17,9 @@ import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
 import android.os.Build
+import androidx.lifecycle.DefaultLifecycleObserver
+import androidx.lifecycle.LifecycleOwner
+import androidx.lifecycle.ProcessLifecycleOwner
 import dagger.hilt.android.HiltAndroidApp
 import ltechnologies.onionphone.pgpshield.data.KeyRepository
 import ltechnologies.onionphone.pgpshield.data.SettingsRepository
@@ -80,6 +85,15 @@ class PgpShieldApplication : Application() {
         }
         installCrashHandler()
         BouncyCastleProviderHolder.ensureRegistered()
+        ProcessLifecycleOwner.get().lifecycle.addObserver(
+            object : DefaultLifecycleObserver {
+                override fun onStop(owner: LifecycleOwner) {
+                    // Multi-window / recent-apps: re-lock when process leaves foreground.
+                    overlayPassphraseSession.clearAll()
+                    appLockManager.lock()
+                }
+            },
+        )
         appScope.launch {
             runCatching { encryptedBlobStore.warmKeyset() }
                 .onFailure { Timber.w(it, "Vault keyset warm-up deferred") }
@@ -89,14 +103,16 @@ class PgpShieldApplication : Application() {
             paddingTemplateDao.insert(
                 PaddingTemplateEntity(
                     templateId = "default",
-                    title = "Draft",
-                    content = "Notes:\n",
+                    title = getString(R.string.padding_template_default_title),
+                    content = getString(R.string.padding_template_default_content),
                 ),
             )
             val purged = keyRepository.purgeMissingBlobKeys()
             if (purged > 0) {
                 Timber.w("Purged %d key(s) with missing encrypted blobs", purged)
             }
+            runCatching { keyRepository.refreshExpiryMetadata() }
+                .onFailure { Timber.w(it, "Expiry metadata refresh failed") }
             checkBackupReminder()
         }
         val filter = IntentFilter(Intent.ACTION_SCREEN_OFF)

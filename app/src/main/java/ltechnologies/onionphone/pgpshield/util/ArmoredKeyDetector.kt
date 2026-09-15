@@ -1,11 +1,15 @@
 package ltechnologies.onionphone.pgpshield.util
 
 /**
- * Lightweight heuristics for classifying ASCII-armored OpenPGP key blocks.
+ * Lightweight heuristics for classifying OpenPGP key material (ASCII armor or binary).
  */
 
-/** Detects whether an armored block contains a secret or public key. */
+import ltechnologies.onionphone.pgpshield.engine.KeyRingReader
+
+/** Detects whether key bytes / armor contain a secret or public key. */
 object ArmoredKeyDetector {
+    private val reader = KeyRingReader()
+
     /**
      * Classifies an armored block.
      *
@@ -19,10 +23,15 @@ object ArmoredKeyDetector {
         else -> null
     }
 
-    /** Produces a user-facing label describing the detected block type. */
-    fun label(armored: String): String = when (isSecretBlock(armored)) {
-        true -> "Secret key detected"
-        false -> "Public key detected"
-        null -> "Paste a -----BEGIN PGP...----- block"
+    /**
+     * Classifies raw key [bytes] (ASCII armor or binary transferable key).
+     * Uses armor headers when present; otherwise parses with Bouncy Castle via [KeyRingReader].
+     */
+    fun isSecretMaterial(bytes: ByteArray): Boolean? {
+        val asText = runCatching { String(bytes, Charsets.UTF_8) }.getOrNull()
+        if (asText != null) {
+            isSecretBlock(asText)?.let { return it }
+        }
+        return reader.detectSecret(bytes)
     }
 }

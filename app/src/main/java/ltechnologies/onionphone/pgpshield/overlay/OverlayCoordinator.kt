@@ -30,6 +30,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.ComposeView
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import ltechnologies.onionphone.pgpshield.R
 import ltechnologies.onionphone.pgpshield.crypto.CryptoOperations
 import ltechnologies.onionphone.pgpshield.data.KeyRepository
 import ltechnologies.onionphone.pgpshield.data.SettingsRepository
@@ -91,11 +92,17 @@ class OverlayCoordinator @Inject constructor(
     private var overlayContainer: FrameLayout? = null
     private var currentPackage: String? = null
     private var focusTarget: FocusTarget? = null
-    private var uiStatus by mutableStateOf("Ready")
+    private var uiStatus by mutableStateOf("")
+
+    private fun str(resId: Int, vararg args: Any): String {
+        val acs = service ?: return ""
+        return if (args.isEmpty()) acs.getString(resId) else acs.getString(resId, *args)
+    }
 
     /** Binds the live [AccessibilityService] used to render and act on the overlay. */
     fun attachService(acs: AccessibilityService) {
         service = acs
+        uiStatus = acs.getString(R.string.overlay_status_ready)
     }
 
     /** Removes the overlay and detaches the service (e.g. on service destroy). */
@@ -171,19 +178,23 @@ class OverlayCoordinator @Inject constructor(
         val textSp = config.overlayTextSizeSp
         val composeView = ComposeView(acs).apply {
             setContent {
+                val encryptLabel = acs.getString(ltechnologies.onionphone.pgpshield.R.string.overlay_action_encrypt)
+                val decryptLabel = acs.getString(ltechnologies.onionphone.pgpshield.R.string.overlay_action_decrypt)
+                val copyLabel = acs.getString(ltechnologies.onionphone.pgpshield.R.string.overlay_action_copy)
+                val hideLabel = acs.getString(ltechnologies.onionphone.pgpshield.R.string.overlay_action_hide)
                 androidx.compose.foundation.layout.Column(Modifier.padding(4.dp)) {
                     Button(onClick = { encryptFocusedField() }, modifier = Modifier.padding(2.dp)) {
-                        Text("Encrypt", fontSize = textSp.sp)
+                        Text(encryptLabel, fontSize = textSp.sp)
                     }
                     Button(onClick = { decryptFocusedField() }, modifier = Modifier.padding(2.dp)) {
-                        Text("Decrypt", fontSize = textSp.sp)
+                        Text(decryptLabel, fontSize = textSp.sp)
                     }
                     Button(onClick = { copyFocusedField() }, modifier = Modifier.padding(2.dp)) {
-                        Text("Copy", fontSize = textSp.sp)
+                        Text(copyLabel, fontSize = textSp.sp)
                     }
                     Text(uiStatus, fontSize = (textSp - 1f).coerceAtLeast(10f).sp, modifier = Modifier.padding(2.dp))
                     Button(onClick = { hideAll() }, modifier = Modifier.padding(2.dp)) {
-                        Text("Hide", fontSize = (textSp + 1f).sp)
+                        Text(hideLabel, fontSize = (textSp + 1f).sp)
                     }
                 }
             }
@@ -221,7 +232,7 @@ class OverlayCoordinator @Inject constructor(
 
     private suspend fun runOverlayAction(isEncrypt: Boolean, fromAutoSend: Boolean) {
         if (!actionInFlight.compareAndSet(false, true)) {
-            setStatus("Busy…")
+            setStatus(str(R.string.overlay_status_busy))
             return
         }
         try {
@@ -238,13 +249,13 @@ class OverlayCoordinator @Inject constructor(
                 target = validTargetOrNull()
             }
             if (target == null) {
-                setStatus("No active editable field")
+                setStatus(str(R.string.overlay_status_no_field))
                 return
             }
             val node = target.node
             val text = node.text?.toString()
             if (text.isNullOrBlank()) {
-                setStatus("Field empty")
+                setStatus(str(R.string.overlay_status_field_empty))
                 return
             }
             val pkg = currentPackage ?: return
@@ -253,7 +264,13 @@ class OverlayCoordinator @Inject constructor(
             if (isEncrypt && method == EncodingMethod.ZERO_WIDTH) {
                 val visible = ZeroWidthEncoder.visibleCover(text)
                 if (visible.length < config.minDecoyChars) {
-                    setStatus("Decoy too short (${visible.length}/${config.minDecoyChars})")
+                    setStatus(
+                        str(
+                            R.string.overlay_status_decoy_short_fmt,
+                            visible.length,
+                            config.minDecoyChars,
+                        ),
+                    )
                     return
                 }
             }
@@ -265,18 +282,34 @@ class OverlayCoordinator @Inject constructor(
                 }
             }
             if (result == null) {
-                setStatus(if (isEncrypt) "Encrypt failed" else "Decrypt failed")
+                setStatus(
+                    str(
+                        if (isEncrypt) R.string.overlay_status_encrypt_failed
+                        else R.string.overlay_status_decrypt_failed,
+                    ),
+                )
                 return
             }
             if (config.requireConfirmBeforeSetText && !fromAutoSend) {
-                setStatus("Tap again to apply")
+                setStatus(str(R.string.overlay_status_tap_again))
                 applyOutput(node, result, config, onlyClipboard = true)
                 return
             }
             applyOutput(node, result, config, onlyClipboard = false)
-            setStatus(if (isEncrypt) "Encrypted (${EncodingRegistry.toId(method)})" else "Decrypted")
+            setStatus(
+                if (isEncrypt) {
+                    str(R.string.overlay_status_encrypted_fmt, EncodingRegistry.toId(method))
+                } else {
+                    str(R.string.overlay_status_decrypted)
+                },
+            )
             if (config.showResultToast) {
-                toast(if (isEncrypt) "Overlay encrypted" else "Overlay decrypted")
+                toast(
+                    str(
+                        if (isEncrypt) R.string.overlay_toast_encrypted
+                        else R.string.overlay_toast_decrypted,
+                    ),
+                )
             }
         } finally {
             actionInFlight.set(false)
@@ -336,7 +369,7 @@ class OverlayCoordinator @Inject constructor(
         val fallbackOrder = guessFallbackOrder(text).filterNot { it == selected }
         for (method in fallbackOrder) {
             decodeText(text, config, method)?.let {
-                setStatus("Parsed via ${EncodingRegistry.toId(method)}")
+                setStatus(str(R.string.overlay_status_parsed_fmt, EncodingRegistry.toId(method)))
                 return it
             }
         }
@@ -363,7 +396,7 @@ class OverlayCoordinator @Inject constructor(
             return null
         }
         return String(
-            cryptoOperations.encrypt(text.toByteArray(Charsets.UTF_8), publicKeys).ciphertext,
+            cryptoOperations.encrypt(text.toByteArray(Charsets.UTF_8), publicKeys, allowMdcDegrade = true).ciphertext,
             Charsets.UTF_8,
         )
     }
@@ -375,7 +408,7 @@ class OverlayCoordinator @Inject constructor(
         var passphrase = passphraseSession.get(keyId)
         if (passphrase == null) {
             requestPassphrasePrompt(keyId)
-            setStatus("Enter passphrase in prompt")
+            setStatus(str(R.string.overlay_status_enter_passphrase))
             return null
         }
         return try {
@@ -383,7 +416,7 @@ class OverlayCoordinator @Inject constructor(
             String(result.plaintext, Charsets.UTF_8)
         } catch (e: Exception) {
             passphraseSession.clear(keyId)
-            setStatus("Wrong passphrase")
+            setStatus(str(R.string.overlay_status_wrong_passphrase))
             null
         } finally {
             passphrase.fill('\u0000')
@@ -395,7 +428,7 @@ class OverlayCoordinator @Inject constructor(
         var passphrase = passphraseSession.get(keyId)
         if (passphrase == null) {
             requestPassphrasePrompt(keyId)
-            setStatus("Enter passphrase in prompt")
+            setStatus(str(R.string.overlay_status_enter_passphrase))
             return null
         }
         return try {
@@ -410,7 +443,7 @@ class OverlayCoordinator @Inject constructor(
         var passphrase = passphraseSession.get(keyId)
         if (passphrase == null) {
             requestPassphrasePrompt(keyId)
-            setStatus("Enter passphrase in prompt")
+            setStatus(str(R.string.overlay_status_enter_passphrase))
             return null
         }
         return try {
@@ -427,13 +460,13 @@ class OverlayCoordinator @Inject constructor(
         onlyClipboard: Boolean,
     ) {
         val safeValue = sanitizeForInput(value) ?: run {
-            setStatus("Encoded output exceeds size limit")
+            setStatus(str(R.string.overlay_status_output_too_large))
             return
         }
         if (config.composeViaClipboard || onlyClipboard) {
             val acs = service ?: return
             SensitiveClipboard.copy(acs, "pgp-overlay", safeValue, clearAfterMs = 30_000L)
-            setStatus("Copied (auto-clears)")
+            setStatus(str(R.string.overlay_status_copied_clears))
             return
         }
         if (!setNodeText(node, safeValue)) {
@@ -463,12 +496,12 @@ class OverlayCoordinator @Inject constructor(
         val node = validTargetOrNull()?.node ?: return
         val text = node.text?.toString().orEmpty()
         if (text.isBlank()) {
-            setStatus("Nothing to copy")
+            setStatus(str(R.string.overlay_status_nothing_to_copy))
             return
         }
         val acs = service ?: return
         SensitiveClipboard.copy(acs, "pgp-overlay-source", text, clearAfterMs = 30_000L)
-        setStatus("Copied source text")
+        setStatus(str(R.string.overlay_status_copied_source))
     }
 
     private fun validTargetOrNull(): FocusTarget? {
@@ -592,6 +625,6 @@ class OverlayCoordinator @Inject constructor(
             windowId = node.windowId,
             viewId = node.viewIdResourceName,
         )
-        setStatus("Field ready")
+        setStatus(str(R.string.overlay_status_field_ready))
     }
 }

@@ -32,4 +32,22 @@ object PgpIntentActions {
     const val OKC_IMPORT_KEY = "org.sufficientlysecure.keychain.action.IMPORT_KEY"
     const val OKC_IMPORT_KEY_FROM_KEYSERVER = "org.sufficientlysecure.keychain.action.IMPORT_KEY_FROM_KEYSERVER"
     const val OKC_IMPORT_KEY_FROM_QR_CODE = "org.sufficientlysecure.keychain.action.IMPORT_KEY_FROM_QR_CODE"
+
+    /**
+     * OpenKeychain [Constants.EXTRA_PREFIX] extras (`org.sufficientlysecure.keychain.*`).
+     * Canonical wire names from OpenKeychain source (not the `action.` prefix).
+     */
+    const val OKC_EXTRA_TEXT = "org.sufficientlysecure.keychain.EXTRA_TEXT"
+    const val OKC_EXTRA_KEY_BYTES = "org.sufficientlysecure.keychain.EXTRA_KEY_BYTES"
+    const val OKC_EXTRA_QUERY = "org.sufficientlysecure.keychain.EXTRA_QUERY"
+    const val OKC_EXTRA_FINGERPRINT = "org.sufficientlysecure.keychain.EXTRA_FINGERPRINT"
+    const val OKC_EXTRA_KEY_ID = "org.sufficientlysecure.keychain.extra.EXTRA_KEY_ID"
+    const val OKC_EXTRA_ENCRYPTION_KEY_IDS = "org.sufficientlysecure.keychain.EXTRA_SIGNATURE_KEY_IDS"
+    const val OKC_EXTRA_ASCII_ARMOR = "org.sufficientlysecure.keychain.EXTRA_ASCII_ARMOR"
+
+    /** Legacy / wiki misspellings still seen in the wild — accept alongside canonical. */
+    const val OKC_EXTRA_TEXT_ACTION = "org.sufficientlysecure.keychain.action.EXTRA_TEXT"
+    const val OKC_EXTRA_KEY_BYTES_ACTION = "org.sufficientlysecure.keychain.action.EXTRA_KEY_BYTES"
+    const val OKC_EXTRA_QUERY_ACTION = "org.sufficientlysecure.keychain.action.EXTRA_QUERY"
+    const val OKC_EXTRA_FINGERPRINT_ACTION = "org.sufficientlysecure.keychain.action.EXTRA_FINGERPRINT"
 }

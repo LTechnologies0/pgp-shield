@@ -102,6 +102,17 @@ fun RevokedBadge(modifier: Modifier = Modifier) {
     )
 }
 
+/** Non-interactive badge marking a key as expired. */
+@Composable
+fun ExpiredBadge(modifier: Modifier = Modifier) {
+    AssistChip(
+        onClick = {},
+        enabled = false,
+        label = { Text(stringResource(R.string.common_expired)) },
+        modifier = modifier,
+    )
+}
+
 /** A wrapping [FlowRow] container for laying out a set of chips. */
 @OptIn(ExperimentalLayoutApi::class)
 @Composable

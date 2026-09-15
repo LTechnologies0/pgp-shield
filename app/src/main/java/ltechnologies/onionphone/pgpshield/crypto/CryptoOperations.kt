@@ -139,6 +139,8 @@ class CryptoOperations @Inject constructor(
         signSecretArmored: ByteArray? = null,
         signPassphrase: CharArray? = null,
         passphrase: CharArray? = null,
+        allowMdcDegrade: Boolean = false,
+        customArmorHeaders: Map<String, String> = emptyMap(),
     ) =
         CryptoProgress.measure(CryptoOperation.ENCRYPT) {
             encryptor.encrypt(
@@ -148,13 +150,13 @@ class CryptoOperations @Inject constructor(
                     asciiArmor = asciiArmor,
                     fileName = fileName,
                     integrity = integrity,
-                    // Honor requested integrity: SEIPDv2 falls back only via resolveIntegrity
-                    // (fail-closed when recipients lack Features), never a silent MDC downgrade.
                     forceIntegrity = integrity == MessageIntegrity.LIBREPGP_V5_AEAD,
+                    allowMdcDegrade = allowMdcDegrade,
                     compression = compression,
                     signSecretRingArmored = signSecretArmored,
                     signPassphrase = signPassphrase,
                     passphrase = passphrase,
+                    customArmorHeaders = customArmorHeaders,
                 ),
             )
         }.first
@@ -170,6 +172,7 @@ class CryptoOperations @Inject constructor(
         parallelism: Int = 4,
         integrity: MessageIntegrity = MessageIntegrity.SEIPD_V2_AEAD,
         compression: MessageCompression = MessageCompression.NONE,
+        allowMdcDegrade: Boolean = false,
     ): List<EncryptResult> =
         CryptoProgress.measureSuspend(CryptoOperation.ENCRYPT_MANY) {
             encryptor.encryptMany(
@@ -178,6 +181,7 @@ class CryptoOperations @Inject constructor(
                 parallelism,
                 integrity = integrity,
                 compression = compression,
+                allowMdcDegrade = allowMdcDegrade,
             )
         }.first
 
@@ -191,6 +195,7 @@ class CryptoOperations @Inject constructor(
         compression: MessageCompression = MessageCompression.NONE,
         signSecretArmored: ByteArray? = null,
         signPassphrase: CharArray? = null,
+        allowMdcDegrade: Boolean = false,
     ) =
         CryptoProgress.measureSuspend(CryptoOperation.ENCRYPT) {
             encryptor.encryptSuspending(
@@ -201,6 +206,7 @@ class CryptoOperations @Inject constructor(
                     fileName = fileName,
                     integrity = integrity,
                     forceIntegrity = integrity == MessageIntegrity.LIBREPGP_V5_AEAD,
+                    allowMdcDegrade = allowMdcDegrade,
                     compression = compression,
                     signSecretRingArmored = signSecretArmored,
                     signPassphrase = signPassphrase,
@@ -214,6 +220,7 @@ class CryptoOperations @Inject constructor(
         secretArmored: ByteArray,
         passphrase: CharArray,
         signerPublicArmored: List<ByteArray> = emptyList(),
+        cachedDecryptedSessionKey: ByteArray? = null,
     ) =
         CryptoProgress.measure(CryptoOperation.DECRYPT) {
             decryptor.decrypt(
@@ -223,6 +230,27 @@ class CryptoOperations @Inject constructor(
                     passphrase = passphrase,
                     signerPublicKeyRingsArmored = signerPublicArmored,
                     smartCard = smartCardPort.takeIf { it.isAvailable() },
+                    cachedDecryptedSessionKey = cachedDecryptedSessionKey,
+                ),
+            )
+        }.first
+
+    /**
+     * Decrypts using a previously returned OpenPGP API session key (no secret ring).
+     */
+    fun decryptWithSessionKey(
+        ciphertext: ByteArray,
+        decryptedSessionKey: ByteArray,
+        signerPublicArmored: List<ByteArray> = emptyList(),
+    ) =
+        CryptoProgress.measure(CryptoOperation.DECRYPT) {
+            decryptor.decrypt(
+                DecryptRequest(
+                    ciphertext = ciphertext,
+                    secretKeyRingArmored = null,
+                    passphrase = CharArray(0),
+                    signerPublicKeyRingsArmored = signerPublicArmored,
+                    cachedDecryptedSessionKey = decryptedSessionKey,
                 ),
             )
         }.first
@@ -239,6 +267,8 @@ class CryptoOperations @Inject constructor(
         passphrase: CharArray,
         detachedBinary: Boolean = false,
         inlineBinary: Boolean = false,
+        asciiArmor: Boolean = true,
+        customArmorHeaders: Map<String, String> = emptyMap(),
     ) =
         CryptoProgress.measure(CryptoOperation.SIGN) {
             signer.sign(
@@ -249,6 +279,8 @@ class CryptoOperations @Inject constructor(
                     detachedBinary = detachedBinary,
                     inlineBinary = inlineBinary,
                     cleartext = !detachedBinary && !inlineBinary,
+                    asciiArmor = asciiArmor,
+                    customArmorHeaders = customArmorHeaders,
                     smartCard = smartCardPort.takeIf { it.isAvailable() },
                 ),
             )
@@ -393,12 +425,18 @@ class CryptoOperations @Inject constructor(
         )
 
     /** Encrypts a set of [files] into a single GnuPG-compatible encrypted tar. */
-    fun encryptTar(files: List<NamedFile>, recipientPublicArmored: List<ByteArray>, asciiArmor: Boolean = true) =
+    fun encryptTar(
+        files: List<NamedFile>,
+        recipientPublicArmored: List<ByteArray>,
+        asciiArmor: Boolean = true,
+        allowMdcDegrade: Boolean = false,
+    ) =
         gpgTar.encrypt(
             GpgTarEncryptRequest(
                 files = files,
                 recipientKeyRings = recipientPublicArmored,
                 asciiArmor = asciiArmor,
+                allowMdcDegrade = allowMdcDegrade,
             ),
         )
 

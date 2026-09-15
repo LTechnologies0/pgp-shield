@@ -22,14 +22,14 @@ object DatabaseModule {
     /**
      * Builds the encrypted-metadata SQLite database for keys, API grants, and overlay config.
      *
-     * Migrations 5→6 and 6→7 preserve data; older versions still fall back to destructive
+     * Migrations 5→6, 6→7, and 7→8 preserve data; older versions still fall back to destructive
      * recreate (pre-stable schemas).
      */
     @Provides
     @Singleton
     fun provideDatabase(@ApplicationContext context: Context): AppDatabase =
         Room.databaseBuilder(context, AppDatabase::class.java, "pgp_shield.db")
-            .addMigrations(MIGRATION_5_6, MIGRATION_6_7)
+            .addMigrations(MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8)
             .fallbackToDestructiveMigrationFrom(1, 2, 3, 4)
             .build()
 
@@ -43,6 +43,14 @@ object DatabaseModule {
         override fun migrate(db: SupportSQLiteDatabase) {
             db.execSQL(
                 "ALTER TABLE key_rings ADD COLUMN hardwareManagedPassphrase INTEGER NOT NULL DEFAULT 0",
+            )
+        }
+    }
+
+    private val MIGRATION_7_8 = object : Migration(7, 8) {
+        override fun migrate(db: SupportSQLiteDatabase) {
+            db.execSQL(
+                "ALTER TABLE key_rings ADD COLUMN isExpired INTEGER NOT NULL DEFAULT 0",
             )
         }
     }

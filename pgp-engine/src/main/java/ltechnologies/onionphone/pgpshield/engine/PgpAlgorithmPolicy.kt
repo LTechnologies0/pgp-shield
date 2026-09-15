@@ -14,6 +14,7 @@ import org.bouncycastle.bcpg.HashAlgorithmTags
 import org.bouncycastle.bcpg.PublicKeyAlgorithmTags
 import org.bouncycastle.bcpg.SymmetricKeyAlgorithmTags
 import org.bouncycastle.bcpg.sig.Features
+import org.bouncycastle.bcpg.sig.KeyFlags
 import org.bouncycastle.bcpg.sig.PreferredAEADCiphersuites
 import org.bouncycastle.openpgp.PGPPublicKey
 import org.bouncycastle.openpgp.PGPSignatureSubpacketGenerator
@@ -152,6 +153,16 @@ object PgpAlgorithmPolicy {
         HashAlgorithmTags.SHA512, HashAlgorithmTags.SHA3_512 -> 512
         else -> 0
     }
+
+    /** OpenPGP API / MIME `micalg` token for a hash algorithm tag. */
+    fun openPgpMicalg(hashAlgorithm: Int): String = when (hashAlgorithm) {
+        HashAlgorithmTags.SHA512, HashAlgorithmTags.SHA3_512 -> "SHA512"
+        HashAlgorithmTags.SHA384 -> "SHA384"
+        HashAlgorithmTags.SHA224 -> "SHA224"
+        HashAlgorithmTags.SHA1 -> "SHA1"
+        else -> "SHA256"
+    }
+
     /** RSA key sizes permitted for new key generation. */
     val allowedRsaBits: Set<Int> = setOf(2048, 3072, 4096)
     /** Default DSA primary key size for legacy DSA/ElGamal rings. */
@@ -379,7 +390,9 @@ object PgpAlgorithmPolicy {
      * Validates [info] against policy (algorithms, RSA strength, revocation, expiry).
      *
      * @param allowRevoked When `false`, revoked master or subkeys cause [PgpException].
-     * @param allowExpired When `false`, expired master or subkeys cause [PgpException].
+     * @param allowExpired When `false`, an expired primary key or a ring with no
+     *   remaining non-revoked encryption-capable subkey causes [PgpException].
+     *   Expired sign/auth-only historical subkeys are tolerated (GnuPG/Kleopatra-style).
      * @throws PgpException with [SecurityProblem] when validation fails.
      */
     fun validateKeyRing(
@@ -432,12 +445,33 @@ object PgpAlgorithmPolicy {
             if (!allowRevoked && subkey.isRevoked) {
                 throw PgpException("Subkey revoked", SecurityProblem.REVOKED_KEY)
             }
-            if (!allowExpired) {
-                val exp = subkey.expirationTime
-                if (exp != null && !exp.isAfter(now)) {
-                    throw PgpException("Key expired", SecurityProblem.EXPIRED_KEY)
-                }
-            }
+        }
+        if (!allowExpired && isKeyRingExpired(info, now)) {
+            throw PgpException("Key expired", SecurityProblem.EXPIRED_KEY)
+        }
+    }
+
+    /**
+     * True when the primary key is past its expiry, or every non-revoked
+     * encryption-capable subkey is expired (no usable encrypt material).
+     */
+    fun isKeyRingExpired(
+        info: KeyRingInfo,
+        now: java.time.Instant = java.time.Instant.now(),
+    ): Boolean {
+        val primary = info.subkeys.firstOrNull { it.keyId == info.masterKeyId }
+        val primaryExp = primary?.expirationTime
+        if (primary != null && !primary.isRevoked && primaryExp != null && !primaryExp.isAfter(now)) {
+            return true
+        }
+        val encryptCapable = info.subkeys.filter { sub ->
+            !sub.isRevoked &&
+                (sub.flags and (KeyFlags.ENCRYPT_COMMS or KeyFlags.ENCRYPT_STORAGE) != 0)
+        }
+        if (encryptCapable.isEmpty()) return false
+        return encryptCapable.none { sub ->
+            val exp = sub.expirationTime
+            exp == null || exp.isAfter(now)
         }
     }
 

@@ -6,10 +6,10 @@ import org.junit.Test
 
 class IntentIoHelperContractTest {
     @Test
-    fun loadEncryptPublicKey_errorMessage_isStable() {
+    fun loadEncryptPublicKey_errorMessage_mentionsRecipient() {
         assertTrue(
             runCatching {
-                error("No recipient key configured")
+                error("No allowed recipient key — Never-trusted, revoked, or expired keys are skipped")
             }.exceptionOrNull()?.message?.contains("recipient") == true,
         )
     }

@@ -5,6 +5,7 @@ import androidx.biometric.BiometricPrompt
 import androidx.core.content.ContextCompat
 import androidx.fragment.app.FragmentActivity
 import kotlinx.coroutines.suspendCancellableCoroutine
+import ltechnologies.onionphone.pgpshield.R
 import javax.crypto.Cipher
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -38,7 +39,7 @@ class HardwarePassphraseAuthenticator @Inject constructor() {
             BiometricManager.BIOMETRIC_ERROR_HW_UNAVAILABLE,
             -> {
                 cont.resumeWithException(
-                    IllegalStateException("Configurez un verrouillage d'écran Android d'abord"),
+                    IllegalStateException(activity.getString(R.string.hw_pass_need_screen_lock)),
                 )
                 return@suspendCancellableCoroutine
             }
@@ -54,7 +55,7 @@ class HardwarePassphraseAuthenticator @Inject constructor() {
                     val unlocked = result.cryptoObject?.cipher
                     if (unlocked == null) {
                         cont.resumeWithException(
-                            IllegalStateException("BiometricPrompt n'a pas renvoyé de Cipher"),
+                            IllegalStateException(activity.getString(R.string.hw_pass_no_cipher)),
                         )
                     } else if (cont.isActive) {
                         cont.resume(unlocked)

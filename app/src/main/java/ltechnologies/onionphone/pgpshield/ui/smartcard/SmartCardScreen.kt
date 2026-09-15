@@ -1,6 +1,7 @@
 package ltechnologies.onionphone.pgpshield.ui.smartcard
 
 import android.app.Activity
+import android.content.Context
 import android.nfc.NfcAdapter
 import android.nfc.Tag
 import androidx.compose.foundation.layout.Column
@@ -30,6 +31,7 @@ import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import dagger.hilt.android.lifecycle.HiltViewModel
+import dagger.hilt.android.qualifiers.ApplicationContext
 import javax.inject.Inject
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -73,6 +75,7 @@ class SmartCardViewModel @Inject constructor(
     private val nfcPort: OpenPgpCardNfcPort,
     private val usbPort: OpenPgpCardUsbPort,
     private val fido: FidoAppLockManager,
+    @ApplicationContext private val context: Context,
 ) : ViewModel() {
     private val _ui = MutableStateFlow(
         SmartCardUiState(
@@ -103,13 +106,17 @@ class SmartCardViewModel @Inject constructor(
 
     fun onNfcTag(tag: Tag) {
         viewModelScope.launch {
-            _ui.value = _ui.value.copy(step = TokenStep.HOLD, error = null, status = "Reading card...")
+            _ui.value = _ui.value.copy(
+                step = TokenStep.HOLD,
+                error = null,
+                status = context.getString(R.string.smartcard_status_reading),
+            )
             runCatching {
                 val info = nfcPort.attachTag(tag)
                 _ui.value = _ui.value.copy(
                     available = true,
                     info = info,
-                    status = "Card selected (" + info.transport + "). Enter PIN.",
+                    status = context.getString(R.string.smartcard_status_card_selected_fmt, info.transport),
                 )
             }.onFailure {
                 _ui.value = _ui.value.copy(step = TokenStep.PRESENT, error = it.message, status = null)
@@ -121,10 +128,13 @@ class SmartCardViewModel @Inject constructor(
         viewModelScope.launch {
             val device = usbPort.listCandidateDevices().firstOrNull()
             if (device == null) {
-                _ui.value = _ui.value.copy(error = "No USB CCID device found (OTG required)")
+                _ui.value = _ui.value.copy(error = context.getString(R.string.smartcard_error_no_usb))
                 return@launch
             }
-            _ui.value = _ui.value.copy(step = TokenStep.HOLD, status = "Requesting USB permission...")
+            _ui.value = _ui.value.copy(
+                step = TokenStep.HOLD,
+                status = context.getString(R.string.smartcard_status_usb_permission),
+            )
             val permitted = suspendCancellableCoroutine { cont ->
                 usbPort.requestPermission(
                     device,
@@ -133,16 +143,19 @@ class SmartCardViewModel @Inject constructor(
                 )
             }
             if (permitted == null) {
-                _ui.value = _ui.value.copy(error = "USB permission denied", step = TokenStep.PRESENT)
+                _ui.value = _ui.value.copy(
+                    error = context.getString(R.string.smartcard_error_usb_denied),
+                    step = TokenStep.PRESENT,
+                )
                 return@launch
             }
-            _ui.value = _ui.value.copy(status = "Opening USB...")
+            _ui.value = _ui.value.copy(status = context.getString(R.string.smartcard_status_opening_usb))
             runCatching {
                 val info = usbPort.attachDevice(permitted)
                 _ui.value = _ui.value.copy(
                     available = true,
                     info = info,
-                    status = "USB card ready. Enter PIN.",
+                    status = context.getString(R.string.smartcard_status_usb_ready),
                     usbCandidates = usbPort.listCandidateDevices().size,
                 )
             }.onFailure {
@@ -155,7 +168,7 @@ class SmartCardViewModel @Inject constructor(
         viewModelScope.launch {
             val pinCopy = pinChars.copyOf()
             try {
-                require(pinCopy.size >= 6) { "PIN too short" }
+                require(pinCopy.size >= 6) { context.getString(R.string.smartcard_error_pin_short) }
                 val ok = cryptoOperations.smartCardPort.verifyPin(pinCopy)
                 if (ok) {
                     val boundIds = withContext(Dispatchers.IO) {
@@ -176,16 +189,22 @@ class SmartCardViewModel @Inject constructor(
                     clearPin()
                     _ui.value = _ui.value.copy(
                         step = TokenStep.DONE,
-                        status = "PIN OK — ${boundIds.size} key id(s) bound to card. You can remove the token after use.",
+                        status = context.getString(R.string.smartcard_status_pin_ok_fmt, boundIds.size),
                         error = null,
                     )
                 } else {
                     clearPin()
-                    _ui.value = _ui.value.copy(error = "PIN rejected", step = TokenStep.HOLD)
+                    _ui.value = _ui.value.copy(
+                        error = context.getString(R.string.smartcard_error_pin_rejected),
+                        step = TokenStep.HOLD,
+                    )
                 }
             } catch (e: Exception) {
                 clearPin()
-                _ui.value = _ui.value.copy(error = e.message ?: "PIN verify failed", step = TokenStep.HOLD)
+                _ui.value = _ui.value.copy(
+                    error = e.message ?: context.getString(R.string.smartcard_error_pin_verify_failed),
+                    step = TokenStep.HOLD,
+                )
             } finally {
                 SensitiveWiper.wipe(pinCopy)
             }
@@ -204,7 +223,7 @@ class SmartCardViewModel @Inject constructor(
             step = TokenStep.PRESENT,
             available = false,
             info = null,
-            status = "Session closed",
+            status = context.getString(R.string.smartcard_status_session_closed),
         )
     }
 
@@ -265,8 +284,15 @@ fun SmartCardScreen(
                     SectionHeader(stringResource(R.string.smartcard_hardware_tokens))
                     TokenStepCard(state.step)
                     val infoText = state.info?.let {
-                        "AID ${it.aid}\nSerial ${it.serial ?: "-"}\nTransport ${it.transport}\n" +
-                            "Sign=${it.hasSignKey} Decrypt=${it.hasDecryptKey} Auth=${it.hasAuthKey}"
+                        stringResource(
+                            R.string.smartcard_info_fmt,
+                            it.aid,
+                            it.serial ?: "-",
+                            it.transport,
+                            it.hasSignKey.toString(),
+                            it.hasDecryptKey.toString(),
+                            it.hasAuthKey.toString(),
+                        )
                     } ?: stringResource(R.string.smartcard_waiting_nfc)
                     Text(
                         text = infoText,

@@ -6,11 +6,14 @@ package ltechnologies.onionphone.pgpshield.ui
  * Must be a [FragmentActivity]: [androidx.biometric.BiometricPrompt] requires it.
  */
 
+import android.content.Intent
 import android.os.Bundle
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.core.view.WindowCompat
 import androidx.fragment.app.FragmentActivity
@@ -39,8 +42,11 @@ class MainActivity : FragmentActivity() {
     @Inject lateinit var appLockAuthenticator: AppLockAuthenticator
     @Inject lateinit var fidoAppLockManager: FidoAppLockManager
 
+    private val pendingViewKeyId = mutableStateOf<Long?>(null)
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        pendingViewKeyId.value = intentViewKeyId()
         applyLanguage(settingsRepository.current().appLanguage)
         WindowSecureHelper.bind(this, settingsRepository)
         lifecycleScope.launch {
@@ -54,18 +60,31 @@ class MainActivity : FragmentActivity() {
         setContent {
             PgpShieldTheme {
                 val snackbarHostState = remember { SnackbarHostState() }
+                val viewKeyId by pendingViewKeyId
                 CompositionLocalProvider(LocalSnackbarHostState provides snackbarHostState) {
                     AppLockGate(
                         appLockManager = appLockManager,
                         authenticator = appLockAuthenticator,
                         fidoAppLockManager = fidoAppLockManager,
                     ) {
-                        PgpShieldNavHost()
+                        PgpShieldNavHost(
+                            viewKeyId = viewKeyId,
+                            onViewKeyConsumed = { pendingViewKeyId.value = null },
+                        )
                     }
                 }
             }
         }
     }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        pendingViewKeyId.value = intentViewKeyId()
+    }
+
+    private fun intentViewKeyId(): Long? =
+        intent.getLongExtra(EXTRA_VIEW_KEY_ID, 0L).takeIf { it != 0L }
 
     private fun applyLanguage(language: String) {
         val locales = if (language == "system") {
@@ -74,5 +93,10 @@ class MainActivity : FragmentActivity() {
             LocaleListCompat.forLanguageTags(language)
         }
         AppCompatDelegate.setApplicationLocales(locales)
+    }
+
+    companion object {
+        /** OpenPGP API / mail clients: open key detail for this master or signing key id. */
+        const val EXTRA_VIEW_KEY_ID = "view_key_id"
     }
 }

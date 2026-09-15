@@ -43,21 +43,26 @@ object PgpRecipientCapabilities {
     /**
      * Resolves effective integrity for encryption.
      *
-     * When [requested] is [MessageIntegrity.SEIPD_V2_AEAD] and [force] is false, requires every
-     * recipient to advertise SEIPDv2. Does **not** silently fall back to MDC (fail closed).
-     * Pass [force]=true to emit SEIPDv2 regardless of Features (caller accepts interop risk).
+     * When [requested] is [MessageIntegrity.SEIPD_V2_AEAD] and [force] is false:
+     * - If every recipient advertises SEIPDv2 → keep SEIPDv2.
+     * - Else if [allowMdcDegrade] → use MDC (OpenKeychain-style negotiation for mail APIs).
+     * - Else → throw (fail closed for in-app modern encrypt).
      *
-     * @throws PgpException when recipients lack SEIPDv2 and [force] is false.
+     * Pass [force]=true to emit the requested integrity regardless of Features.
+     *
+     * @throws PgpException when recipients lack SEIPDv2 and neither [force] nor [allowMdcDegrade].
      */
     fun resolveIntegrity(
         requested: MessageIntegrity,
         recipientRings: List<ByteArray>,
         force: Boolean,
+        allowMdcDegrade: Boolean = false,
     ): MessageIntegrity {
         if (force || recipientRings.isEmpty()) return requested
         if (requested != MessageIntegrity.SEIPD_V2_AEAD) return requested
         val allSupport = recipientRings.all { fromArmoredRing(it).supportsSeipdV2 }
         if (allSupport) return MessageIntegrity.SEIPD_V2_AEAD
+        if (allowMdcDegrade) return MessageIntegrity.MDC
         throw PgpException(
             "Recipients do not advertise SEIPDv2 AEAD; select MDC integrity or update recipient keys",
             SecurityProblem.INSECURE_ALGORITHM,

@@ -2,6 +2,33 @@
 
 ## Unreleased
 
+## 1.0.5
+
+### OpenPGP API (OpenKeychain / K-9 / FairEmail parity)
+- Full `USER_INTERACTION_REQUIRED` PendingIntent surface: unlock vault, passphrase, sign/encrypt key pickers, per-app key allowlist grant, insecure-crypto warning override, Autocrypt setup-code display
+- `ACTION_AUTOCRYPT_KEY_TRANSFER`: passphrase-encrypt secret key(s) with Numeric9x4 transfer code and return the code UI (OKC Autocrypt Setup Message)
+- Allowlist-first API: ENCRYPT / SIGN / SIGN_AND_ENCRYPT / GET_KEY / GET_KEY_IDS / GET_SIGN_KEY_ID / BACKUP / Autocrypt transfer / decrypt PKESK and verify paths return **grant permission** PendingIntent when a local key exists but is not allowed for the caller — no silent skip, no fake KEY_MISSING / “no secret keys”
+- `DECRYPT_VERIFY`: PKESK preflight distinguishes “no matching secret on device” vs “local but disallowed”; cleartext and detached verify load all local pubs then gate on allowlist
+- Decrypt metadata: mime type, modification time, signature timestamp; progress honors `EXTRA_DATA_LENGTH`; non-standard `result_size` removed
+- Signature results: OKC parcelables (`OpenPgpSignatureResult`, trust/UID/revoked/expired, `RESULT_INVALID_NOT_INTENDED_RECIPIENT` when `EXTRA_SENDER_ADDRESS` mismatches signer UIDs, Autocrypt peer status)
+- Crypto warning override: `EXTRA_SUPPORT_OVERRIDE_CRYPTO_WARNING` (OKC typo `crpto` preserved), `ApiInsecureCryptoActivity` + persistent `CryptoWarningOverrideStore`, `RESULT_OVERRIDE_CRYPTO_WARNING`
+- `SIGN_AND_ENCRYPT` encrypt-to-self (OKC `AdditionalEncryptId`); ENCRYPT / SIGN_AND_ENCRYPT default `EXTRA_REQUEST_ASCII_ARMOR=true`; DETACHED_SIGN stays binary default
+- Multi-secret sign key: force picker when more than one secret; ENCRYPT `EXTRA_KEY_IDS` resolves subkey → master; unknown `EXTRA_USER_IDS` → import/keyserver PendingIntent
+- `CHECK_PERMISSION` advertises override-crypto support; Settings shows OpenPGP API allowed keys per calling app
+- Intent import: finish after successful import, cancel on back; QR / `openpgp4fpr` / OpenKeychain import-from-QR intent filters
+
+### Security
+- StrongBox/TEE passphrase vault: `setUnlockedDeviceRequired`, biometric invalidation, attestation probe; refuse vault on `DEVICE_INSECURE` (no screen lock)
+- Re-lock on `ProcessLifecycleOwner` ON_STOP (in addition to screen-off / memory trim)
+- Autocrypt peer maps + FIDO prefs moved to EncryptedSharedPreferences
+- ExportedKeyProvider fails closed while app lock is engaged
+- Residual unchanged: BC unlock still materializes private keys in process RAM during sign/decrypt (C13 — card/HSM path)
+
+### UX / engine
+- Overlay, Crypto, KeyDetail, SmartCard, and intent I/O polish (result writer, GpgTar, armor headers, keyring minimize)
+- Room schema **8** (API allowed-key observation); EN/FR/ES strings for new API / grant / Autocrypt / override flows
+- SECURITY.md documents auth-bound vault, mandatory device lock, lifecycle re-lock, encrypted prefs, FLAG_SECURE default
+
 ## 1.0.4
 
 ### Security

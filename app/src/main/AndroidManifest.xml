@@ -50,11 +50,43 @@
 
 
         <activity
-
             android:name=".api.GrantApiAccessActivity"
-
             android:exported="false"
+            android:theme="@style/Theme.PgpShield" />
 
+        <activity
+            android:name=".api.ApiGrantKeyPermissionActivity"
+            android:exported="false"
+            android:theme="@style/Theme.PgpShield" />
+
+        <activity
+            android:name=".api.ApiPassphraseActivity"
+            android:exported="false"
+            android:theme="@style/Theme.PgpShield" />
+
+        <activity
+            android:name=".api.ApiSelectSignKeyActivity"
+            android:exported="false"
+            android:theme="@style/Theme.PgpShield" />
+
+        <activity
+            android:name=".api.ApiSelectEncryptKeyActivity"
+            android:exported="false"
+            android:theme="@style/Theme.PgpShield" />
+
+        <activity
+            android:name=".api.ApiUnlockActivity"
+            android:exported="false"
+            android:theme="@style/Theme.PgpShield" />
+
+        <activity
+            android:name=".api.ApiInsecureCryptoActivity"
+            android:exported="false"
+            android:theme="@style/Theme.PgpShield" />
+
+        <activity
+            android:name=".api.ApiAutocryptSetupCodeActivity"
+            android:exported="false"
             android:theme="@style/Theme.PgpShield" />
 
         <activity
@@ -338,6 +370,26 @@
                 <action android:name="org.sufficientlysecure.keychain.action.IMPORT_KEY_FROM_KEYSERVER" />
 
                 <category android:name="android.intent.category.DEFAULT" />
+
+            </intent-filter>
+
+            <intent-filter>
+
+                <action android:name="org.sufficientlysecure.keychain.action.IMPORT_KEY_FROM_QR_CODE" />
+
+                <category android:name="android.intent.category.DEFAULT" />
+
+            </intent-filter>
+
+            <intent-filter>
+
+                <action android:name="android.intent.action.VIEW" />
+
+                <category android:name="android.intent.category.DEFAULT" />
+
+                <category android:name="android.intent.category.BROWSABLE" />
+
+                <data android:scheme="openpgp4fpr" />
 
             </intent-filter>
 

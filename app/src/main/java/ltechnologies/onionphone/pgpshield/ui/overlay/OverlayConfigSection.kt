@@ -39,6 +39,7 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import ltechnologies.onionphone.pgpshield.R
+import ltechnologies.onionphone.pgpshield.data.KeySummary
 import ltechnologies.onionphone.pgpshield.data.db.OverlayAppConfigEntity
 import ltechnologies.onionphone.pgpshield.encoding.EncodingMethod
 import ltechnologies.onionphone.pgpshield.encoding.EncodingRegistry
@@ -106,7 +107,7 @@ fun OverlayConfigSection(
             value = packageName,
             onValueChange = { packageName = it },
             label = { Text(stringResource(R.string.overlay_package_name)) },
-            placeholder = { Text("com.telegram.messenger") },
+            placeholder = { Text(stringResource(R.string.overlay_pkg_placeholder)) },
             modifier = Modifier
                 .fillMaxWidth()
                 .padding(top = 8.dp),
@@ -212,6 +213,7 @@ fun OverlayConfigSection(
                 keys = keys,
                 selectedIds = recipientKeyIds,
                 onSelectionChange = { recipientKeyIds = it },
+                keyFilter = { it.isEncryptPickerCandidate() },
                 modifier = Modifier.padding(vertical = 4.dp),
             )
             KeySelectDropdown(
@@ -282,10 +284,29 @@ fun OverlayConfigSection(
             M3ListCard(onClick = null, modifier = Modifier.padding(vertical = 4.dp)) {
                 Column(Modifier.padding(12.dp)) {
                     Text(cfg.packageName, style = MaterialTheme.typography.titleSmall)
-                    Text("${cfg.encodingMethod} · enabled=${cfg.enabled}")
-                    Text("mode=${cfg.autoMode}", style = MaterialTheme.typography.bodySmall)
-                    cfg.encryptKeyId?.let { Text("Encrypt: ${formatKeyId(it)}", style = MaterialTheme.typography.bodySmall) }
-                    cfg.decryptKeyId?.let { Text("Decrypt: ${formatKeyId(it)}", style = MaterialTheme.typography.bodySmall) }
+                    Text(
+                        stringResource(
+                            R.string.overlay_config_summary_fmt,
+                            cfg.encodingMethod,
+                            stringResource(if (cfg.enabled) R.string.common_enabled else R.string.common_disabled),
+                        ),
+                    )
+                    Text(
+                        stringResource(R.string.overlay_config_mode_fmt, cfg.autoMode),
+                        style = MaterialTheme.typography.bodySmall,
+                    )
+                    cfg.encryptKeyId?.let {
+                        Text(
+                            stringResource(R.string.overlay_config_encrypt_fmt, formatKeyId(it)),
+                            style = MaterialTheme.typography.bodySmall,
+                        )
+                    }
+                    cfg.decryptKeyId?.let {
+                        Text(
+                            stringResource(R.string.overlay_config_decrypt_fmt, formatKeyId(it)),
+                            style = MaterialTheme.typography.bodySmall,
+                        )
+                    }
                     IconButton(onClick = { viewModel.delete(cfg.packageName) }) {
                         Icon(Icons.Default.Delete, contentDescription = stringResource(R.string.common_remove))
                     }

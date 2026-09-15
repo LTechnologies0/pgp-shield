@@ -5,7 +5,11 @@ import javax.crypto.Cipher
 import javax.crypto.spec.GCMParameterSpec
 
 /**
- * File-backed AES-GCM blobs sealed with a [StrongBoxAesKeyFactory] key (no per-op user auth).
+ * File-backed AES-GCM blobs sealed with a [StrongBoxAesKeyFactory] key.
+ *
+ * New wrapping keys request `setUnlockedDeviceRequired(true)` so ciphertext cannot be
+ * unsealed while the lock screen is held. Per-op BiometricPrompt is not used here
+ * (S/MIME decrypt may run from background IPC); app lock + unlocked-device gate access.
  *
  * Format: magic(3) + version(1) + iv(12) + ciphertext+tag.
  */

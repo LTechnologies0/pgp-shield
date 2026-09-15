@@ -4,6 +4,7 @@ import androidx.biometric.BiometricManager
 import androidx.biometric.BiometricPrompt
 import androidx.core.content.ContextCompat
 import androidx.fragment.app.FragmentActivity
+import ltechnologies.onionphone.pgpshield.R
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -34,7 +35,11 @@ class AppLockAuthenticator @Inject constructor() {
             BiometricManager.BIOMETRIC_ERROR_NO_HARDWARE,
             BiometricManager.BIOMETRIC_ERROR_HW_UNAVAILABLE,
             -> {
-                onResult(AppLockAuthResult.Failure("Configurez un verrouillage d'écran Android d'abord"))
+                onResult(
+                    AppLockAuthResult.Failure(
+                        activity.getString(R.string.app_lock_need_screen_lock),
+                    ),
+                )
                 return
             }
             else -> Unit
@@ -65,8 +70,8 @@ class AppLockAuthenticator @Inject constructor() {
         )
 
         val info = BiometricPrompt.PromptInfo.Builder()
-            .setTitle("Déverrouiller PGP Shield")
-            .setSubtitle("Empreinte, visage ou code PIN de l'appareil")
+            .setTitle(activity.getString(R.string.app_lock_prompt_title))
+            .setSubtitle(activity.getString(R.string.app_lock_prompt_subtitle))
             .setAllowedAuthenticators(authenticators)
             .build()
 
@@ -117,9 +122,11 @@ class AppLockAuthenticator @Inject constructor() {
             },
         )
         val info = BiometricPrompt.PromptInfo.Builder()
-            .setTitle("Clé de sécurité / FIDO")
-            .setSubtitle(label ?: "Confirmez avec biométrie forte ou clé de sécurité")
-            .setNegativeButtonText("Annuler")
+            .setTitle(activity.getString(R.string.app_lock_fido_prompt_title))
+            .setSubtitle(
+                label ?: activity.getString(R.string.app_lock_fido_prompt_subtitle),
+            )
+            .setNegativeButtonText(activity.getString(R.string.common_cancel))
             .setAllowedAuthenticators(authenticators)
             .build()
         prompt.authenticate(info)

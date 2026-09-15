@@ -44,15 +44,22 @@ data class EncryptRequest(
     val fileName: String = PGPLiteralData.CONSOLE,
     val integrity: MessageIntegrity = MessageIntegrity.SEIPD_V2_AEAD,
     /**
-     * When `false` and [integrity] is [MessageIntegrity.SEIPD_V2_AEAD], degrade to MDC
-     * unless every public recipient advertises Features SEIPDv2.
+     * When `true`, emit [integrity] even if recipients lack matching Features
+     * (e.g. LibrePGP v5 AEAD).
      */
     val forceIntegrity: Boolean = false,
+    /**
+     * When `true` and [integrity] is [MessageIntegrity.SEIPD_V2_AEAD], degrade to MDC
+     * unless every public recipient advertises Features SEIPDv2 (mail / OpenPGP API).
+     */
+    val allowMdcDegrade: Boolean = false,
     val aeadAlgorithm: Int = PgpAlgorithmPolicy.defaultAeadAlgorithm,
     val compression: MessageCompression = MessageCompression.NONE,
     val passphrase: CharArray? = null,
     val signSecretRingArmored: ByteArray? = null,
     val signPassphrase: CharArray? = null,
+    /** Optional ASCII-armor headers ("Name" to "value"); applied when [asciiArmor] is true. */
+    val customArmorHeaders: Map<String, String> = emptyMap(),
 )
 
 /** One plaintext entry for [PgpEncryptor.encryptMany]. */
@@ -65,6 +72,8 @@ data class EncryptPlaintext(
 /** Encrypted (and optionally armored) OpenPGP message bytes. */
 data class EncryptResult(
     val ciphertext: ByteArray,
+    /** Integrity actually used after recipient capability negotiation. */
+    val integrity: MessageIntegrity = MessageIntegrity.SEIPD_V2_AEAD,
 )
 
 /** Encrypts data to OpenPGP public-key and/or passphrase recipients. */
@@ -90,6 +99,7 @@ class PgpEncryptor {
             requested = request.integrity,
             recipientRings = request.recipientKeyRings,
             force = request.forceIntegrity,
+            allowMdcDegrade = request.allowMdcDegrade,
         )
         return encryptWithKeys(
             plaintext = request.plaintext,
@@ -102,6 +112,7 @@ class PgpEncryptor {
             passphrase = request.passphrase,
             signSecretRingArmored = request.signSecretRingArmored,
             signPassphrase = request.signPassphrase,
+            customArmorHeaders = request.customArmorHeaders,
         )
     }
 
@@ -111,6 +122,7 @@ class PgpEncryptor {
         parallelism: Int = 4,
         integrity: MessageIntegrity = MessageIntegrity.SEIPD_V2_AEAD,
         compression: MessageCompression = MessageCompression.NONE,
+        allowMdcDegrade: Boolean = false,
     ): List<EncryptResult> {
         if (plaintexts.isEmpty()) return emptyList()
         CryptoProgress.stage(CryptoStage.PARSE_KEYS)
@@ -119,6 +131,7 @@ class PgpEncryptor {
             requested = integrity,
             recipientRings = recipientKeyRings,
             force = false,
+            allowMdcDegrade = allowMdcDegrade,
         )
         CryptoProgress.stage(CryptoStage.ENCRYPT_SESSION)
         return BcParallel.map(plaintexts, parallelism) { item ->
@@ -133,6 +146,7 @@ class PgpEncryptor {
                 passphrase = null,
                 signSecretRingArmored = null,
                 signPassphrase = null,
+                customArmorHeaders = emptyMap(),
             )
         }
     }
@@ -159,6 +173,7 @@ class PgpEncryptor {
         passphrase: CharArray?,
         signSecretRingArmored: ByteArray?,
         signPassphrase: CharArray?,
+        customArmorHeaders: Map<String, String> = emptyMap(),
     ): EncryptResult {
         CryptoProgress.stage(CryptoStage.BUILD_LITERAL)
         val innerBytes = if (signSecretRingArmored != null && signPassphrase != null) {
@@ -216,14 +231,17 @@ class PgpEncryptor {
         val result = if (asciiArmor) {
             CryptoProgress.stage(CryptoStage.ARMOR)
             ByteArrayOutputStream().use { armoredOut ->
-                ArmoredOutputStream(armoredOut).use { armor -> armor.write(payload) }
+                ArmoredOutputStream(armoredOut).use { armor ->
+                    ArmorHeaders.apply(armor, customArmorHeaders)
+                    armor.write(payload)
+                }
                 armoredOut.toByteArray()
             }
         } else {
             payload
         }
 
-        return EncryptResult(ciphertext = result)
+        return EncryptResult(ciphertext = result, integrity = integrity)
     }
 
     private fun buildLiteral(plaintext: ByteArray, fileName: String): ByteArray =

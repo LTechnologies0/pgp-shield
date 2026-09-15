@@ -22,6 +22,7 @@ data class GpgTarEncryptRequest(
     val files: List<NamedFile>,
     val recipientKeyRings: List<ByteArray>,
     val asciiArmor: Boolean = true,
+    val allowMdcDegrade: Boolean = false,
 )
 
 /** Decrypt request for a [GpgTar]-encrypted archive. */
@@ -53,6 +54,7 @@ class GpgTar {
                 plaintext = payload,
                 recipientKeyRings = request.recipientKeyRings,
                 asciiArmor = request.asciiArmor,
+                allowMdcDegrade = request.allowMdcDegrade,
                 fileName = TAR_LITERAL_NAME,
             ),
         )

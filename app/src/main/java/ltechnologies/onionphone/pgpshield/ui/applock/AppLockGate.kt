@@ -17,8 +17,8 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -27,10 +27,15 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.fragment.app.FragmentActivity
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import ltechnologies.onionphone.pgpshield.R
 import ltechnologies.onionphone.pgpshield.security.AppLockAuthResult
 import ltechnologies.onionphone.pgpshield.security.AppLockAuthenticator
 import ltechnologies.onionphone.pgpshield.security.AppLockManager
@@ -47,7 +52,10 @@ fun AppLockGate(
     val lockState by appLockManager.state.collectAsStateWithLifecycle()
     when (lockState) {
         AppLockState.DEVICE_INSECURE -> DeviceInsecureScreen(
-            onContinue = { appLockManager.markUnlocked() },
+            onSecuritySettings = {
+                // After returning from Settings, re-check Keyguard.
+            },
+            onResumeCheck = { appLockManager.refreshDeviceSecurity() },
         )
         AppLockState.LOCKED -> AppLockScreen(
             authenticator = authenticator,
@@ -71,10 +79,12 @@ private fun AppLockScreen(
     var errorMessage by remember { mutableStateOf<String?>(null) }
     var promptShown by remember { mutableStateOf(false) }
     var fidoConfirmed by remember { mutableStateOf(!fidoRequired) }
+    val fragmentActivityRequired = stringResource(R.string.app_lock_fragment_activity_required)
+    val securityKeyFallback = stringResource(R.string.app_lock_security_key_fallback)
 
     fun launchPrompt() {
         val act = activity ?: run {
-            errorMessage = "Hôte FragmentActivity requis pour le déverrouillage"
+            errorMessage = fragmentActivityRequired
             return
         }
         promptShown = true
@@ -129,14 +139,13 @@ private fun AppLockScreen(
         )
         Spacer(modifier = Modifier.height(16.dp))
         Text(
-            text = "PGP Shield est verrouillé",
+            text = stringResource(R.string.app_lock_title),
             style = MaterialTheme.typography.headlineSmall,
             textAlign = TextAlign.Center,
         )
         Spacer(modifier = Modifier.height(8.dp))
         Text(
-            text = "Déverrouillez avec le code PIN, le schéma ou la biométrie. " +
-                "Les clés secrètes restent chiffrées (StrongBox / Keystore) jusqu'à l'authentification.",
+            text = stringResource(R.string.app_lock_body),
             style = MaterialTheme.typography.bodyMedium,
             textAlign = TextAlign.Center,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -144,12 +153,15 @@ private fun AppLockScreen(
         if (fidoRequired) {
             Spacer(modifier = Modifier.height(12.dp))
             Text(
-                text = "FIDO2 / YubiKey requis: ${fidoLabel ?: "security key"}",
+                text = stringResource(
+                    R.string.app_lock_fido_required_fmt,
+                    fidoLabel ?: securityKeyFallback,
+                ),
                 style = MaterialTheme.typography.bodyMedium,
                 textAlign = TextAlign.Center,
             )
             Text(
-                text = "Après le déverrouillage appareil, une confirmation biométrie forte / clé est exigée.",
+                text = stringResource(R.string.app_lock_fido_confirm_hint),
                 style = MaterialTheme.typography.bodySmall,
                 textAlign = TextAlign.Center,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -165,14 +177,27 @@ private fun AppLockScreen(
             onClick = { launchPrompt() },
             modifier = Modifier.fillMaxWidth(),
         ) {
-            Text("Déverrouiller")
+            Text(stringResource(R.string.app_lock_unlock))
         }
     }
 }
 
 @Composable
-private fun DeviceInsecureScreen(onContinue: () -> Unit) {
+private fun DeviceInsecureScreen(
+    onSecuritySettings: () -> Unit = {},
+    onResumeCheck: () -> Unit,
+) {
     val context = LocalContext.current
+    val lifecycleOwner = LocalLifecycleOwner.current
+    DisposableEffect(lifecycleOwner) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_RESUME) {
+                onResumeCheck()
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+    }
     Column(
         modifier = Modifier
             .fillMaxSize()
@@ -187,14 +212,13 @@ private fun DeviceInsecureScreen(onContinue: () -> Unit) {
         )
         Spacer(modifier = Modifier.height(16.dp))
         Text(
-            text = "Verrouillage système requis",
+            text = stringResource(R.string.app_lock_device_insecure_title),
             style = MaterialTheme.typography.headlineSmall,
             textAlign = TextAlign.Center,
         )
         Spacer(modifier = Modifier.height(8.dp))
         Text(
-            text = "Configurez un code PIN, un schéma ou une biométrie dans les paramètres Android. " +
-                "Sans verrouillage d'écran, StrongBox / Keystore ne peuvent pas imposer la présence utilisateur.",
+            text = stringResource(R.string.app_lock_device_insecure_body),
             style = MaterialTheme.typography.bodyMedium,
             textAlign = TextAlign.Center,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -202,14 +226,12 @@ private fun DeviceInsecureScreen(onContinue: () -> Unit) {
         Spacer(modifier = Modifier.height(24.dp))
         Button(
             onClick = {
+                onSecuritySettings()
                 context.startActivity(Intent(Settings.ACTION_SECURITY_SETTINGS))
             },
             modifier = Modifier.fillMaxWidth(),
         ) {
-            Text("Ouvrir les paramètres de sécurité")
-        }
-        TextButton(onClick = onContinue) {
-            Text("Continuer sans verrouillage app")
+            Text(stringResource(R.string.app_lock_open_security_settings))
         }
     }
 }

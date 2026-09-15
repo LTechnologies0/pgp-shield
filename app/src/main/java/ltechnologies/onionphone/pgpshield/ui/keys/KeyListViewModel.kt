@@ -9,6 +9,9 @@ import androidx.fragment.app.FragmentActivity
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import dagger.hilt.android.lifecycle.HiltViewModel
+import dagger.hilt.android.qualifiers.ApplicationContext
+import android.content.Context
+import ltechnologies.onionphone.pgpshield.R
 import ltechnologies.onionphone.pgpshield.crypto.CryptoOperations
 import ltechnologies.onionphone.pgpshield.data.ImportGuard
 import ltechnologies.onionphone.pgpshield.data.KeyRepository
@@ -50,6 +53,7 @@ import kotlinx.coroutines.sync.Semaphore
  */
 @HiltViewModel
 class KeyListViewModel @Inject constructor(
+    @ApplicationContext private val context: Context,
     private val keyRepository: KeyRepository,
     private val cryptoOperations: CryptoOperations,
     private val settingsRepository: SettingsRepository,
@@ -125,9 +129,11 @@ class KeyListViewModel @Inject constructor(
                     ltechnologies.onionphone.pgpshield.engine.PqcSupport.requireAvailable()
                 }
                 effectivePass = if (hardwareManagedPassphrase) {
-                    requireNotNull(activity) { "Activity required for hardware-managed passphrase" }
+                    requireNotNull(activity) {
+                        context.getString(R.string.keys_hw_activity_required)
+                    }
                     require(hardwarePassphraseGate.isAvailable()) {
-                        "Coffre StrongBox/TEE indisponible (verrouillage d'écran + enclave requis)"
+                        context.getString(R.string.keys_hw_vault_unavailable)
                     }
                     hardwarePassphraseGate.generatePassphrase()
                 } else {
@@ -187,7 +193,7 @@ class KeyListViewModel @Inject constructor(
                 val detail = e.message?.takeIf { it.isNotBlank() }
                     ?: root.message?.takeIf { it.isNotBlank() }
                     ?: root.javaClass.simpleName
-                _error.value = "Key creation failed: $detail"
+                _error.value = context.getString(R.string.keys_err_creation_failed_fmt, detail)
                 Timber.e(e, "Key creation failed")
             } finally {
                 SensitiveWiper.wipe(effectivePass, passphrase)
@@ -210,7 +216,7 @@ class KeyListViewModel @Inject constructor(
                 }
                 onDone()
             } catch (e: Exception) {
-                _error.value = e.message ?: "Import failed"
+                _error.value = e.message ?: context.getString(R.string.keys_err_import_failed)
             } finally {
                 _isLoading.value = false
             }
@@ -226,7 +232,7 @@ class KeyListViewModel @Inject constructor(
                 withContext(Dispatchers.IO) { keyRepository.deleteKey(keyId) }
                 onDone?.invoke()
             } catch (e: Exception) {
-                _error.value = e.message ?: "Delete failed"
+                _error.value = e.message ?: context.getString(R.string.keys_err_delete_failed)
             } finally {
                 _isLoading.value = false
             }
@@ -242,7 +248,7 @@ class KeyListViewModel @Inject constructor(
                 withContext(Dispatchers.IO) { keyRepository.revokeKey(keyId) }
                 onDone?.invoke()
             } catch (e: Exception) {
-                _error.value = e.message ?: "Revoke failed"
+                _error.value = e.message ?: context.getString(R.string.keys_err_revoke_failed)
             } finally {
                 _isLoading.value = false
             }
@@ -267,7 +273,7 @@ class KeyListViewModel @Inject constructor(
                 _error.value = null
                 val secret = withContext(Dispatchers.IO) {
                     keyRepository.getArmoredSecret(keyId)
-                        ?: error("Secret key not found")
+                        ?: error(context.getString(R.string.keys_err_secret_not_found))
                 }
                 val updated = withContext(Dispatchers.Default) {
                     cryptoOperations.addSubkey(secret, passphrase, subkeyType, rsaBits, expirySeconds)
@@ -278,7 +284,7 @@ class KeyListViewModel @Inject constructor(
                 }
                 onDone()
             } catch (e: Exception) {
-                _error.value = e.message ?: "Subkey add failed"
+                _error.value = e.message ?: context.getString(R.string.keys_err_subkey_add_failed)
             } finally {
                 passphrase.fill('\u0000')
                 _isLoading.value = false
@@ -302,7 +308,7 @@ class KeyListViewModel @Inject constructor(
                 _error.value = null
                 val secret = withContext(Dispatchers.IO) {
                     keyRepository.getArmoredSecret(keyId)
-                        ?: error("Secret key not found")
+                        ?: error(context.getString(R.string.keys_err_secret_not_found))
                 }
                 val updated = withContext(Dispatchers.Default) {
                     cryptoOperations.changePassphrase(secret, oldPassphrase, newPassphrase)
@@ -312,7 +318,7 @@ class KeyListViewModel @Inject constructor(
                 }
                 onDone()
             } catch (e: Exception) {
-                _error.value = e.message ?: "Passphrase change failed"
+                _error.value = e.message ?: context.getString(R.string.keys_err_passphrase_change_failed)
             } finally {
                 oldPassphrase.fill('\u0000')
                 newPassphrase.fill('\u0000')
@@ -333,7 +339,7 @@ class KeyListViewModel @Inject constructor(
                 }
                 onDone()
             } catch (e: Exception) {
-                _error.value = e.message ?: "Import failed"
+                _error.value = e.message ?: context.getString(R.string.keys_err_import_failed)
             } finally {
                 _isLoading.value = false
             }
@@ -360,7 +366,7 @@ class KeyListViewModel @Inject constructor(
                 settingsRepository.markKeyExported()
                 onDone(cert)
             } catch (e: Exception) {
-                _error.value = e.message ?: "Revocation cert failed"
+                _error.value = e.message ?: context.getString(R.string.keys_err_revocation_cert_failed)
             } finally {
                 passphrase.fill('\u0000')
                 _isLoading.value = false
@@ -388,7 +394,7 @@ class KeyListViewModel @Inject constructor(
                 }
                 onDone()
             } catch (e: Exception) {
-                _error.value = e.message ?: "Certify failed"
+                _error.value = e.message ?: context.getString(R.string.keys_err_certify_failed)
             } finally {
                 passphrase.fill('\u0000')
                 _isLoading.value = false
@@ -404,7 +410,7 @@ class KeyListViewModel @Inject constructor(
                 _error.value = null
                 val settings = settingsRepository.current()
                 if (!settings.keyserverLookupEnabled) {
-                    error("Keyserver lookup is disabled in Settings")
+                    error(context.getString(R.string.keys_search_keyserver_disabled))
                 }
                 val url = settings.keyserverUrl
                 withContext(Dispatchers.IO) {
@@ -412,7 +418,7 @@ class KeyListViewModel @Inject constructor(
                 }
                 onDone()
             } catch (e: Exception) {
-                _error.value = e.message ?: "Keyserver refresh failed"
+                _error.value = e.message ?: context.getString(R.string.keys_err_keyserver_refresh_failed)
             } finally {
                 _isLoading.value = false
             }
@@ -427,7 +433,7 @@ class KeyListViewModel @Inject constructor(
                 _error.value = null
                 val settings = settingsRepository.current()
                 if (!settings.keyserverLookupEnabled) {
-                    error("Keyserver lookup is disabled in Settings")
+                    error(context.getString(R.string.keys_search_keyserver_disabled))
                 }
                 val keys = keyRepository.observeKeys().first()
                 val url = settings.keyserverUrl
@@ -451,7 +457,7 @@ class KeyListViewModel @Inject constructor(
                 }
                 onDone(ok)
             } catch (e: Exception) {
-                _error.value = e.message ?: "Refresh all failed"
+                _error.value = e.message ?: context.getString(R.string.keys_err_refresh_all_failed)
             } finally {
                 _isLoading.value = false
             }
@@ -469,7 +475,7 @@ class KeyListViewModel @Inject constructor(
                 }
                 onDone()
             } catch (e: Exception) {
-                _error.value = e.message ?: "Add user ID failed"
+                _error.value = e.message ?: context.getString(R.string.keys_err_add_userid_failed)
             } finally {
                 passphrase.fill('\u0000')
                 _isLoading.value = false
@@ -486,7 +492,7 @@ class KeyListViewModel @Inject constructor(
                 withContext(Dispatchers.IO) { keyRepository.setTrustLevel(keyId, trustLevel) }
                 onDone?.invoke()
             } catch (e: Exception) {
-                _error.value = e.message ?: "Trust update failed"
+                _error.value = e.message ?: context.getString(R.string.keys_err_trust_update_failed)
             } finally {
                 _isLoading.value = false
             }
@@ -501,13 +507,13 @@ class KeyListViewModel @Inject constructor(
                 _error.value = null
                 val settings = settingsRepository.current()
                 if (!settings.keyserverLookupEnabled) {
-                    error("Keyserver lookup is disabled in Settings")
+                    error(context.getString(R.string.keys_search_keyserver_disabled))
                 }
                 val url = settings.keyserverUrl
                 withContext(Dispatchers.IO) { keyRepository.uploadPublicKey(keyId, url) }
                 onDone()
             } catch (e: Exception) {
-                _error.value = e.message ?: "Upload failed"
+                _error.value = e.message ?: context.getString(R.string.keys_err_upload_failed)
             } finally {
                 _isLoading.value = false
             }

@@ -22,6 +22,8 @@ object IntentPayloadReader {
     fun readText(intent: Intent, activity: ComponentActivity? = null): String? {
         intent.getStringExtra(Intent.EXTRA_TEXT)?.takeIf { it.isNotBlank() }?.let { return it }
         intent.getStringExtra(PgpIntentActions.EXTRA_TEXT)?.takeIf { it.isNotBlank() }?.let { return it }
+        intent.getStringExtra(PgpIntentActions.OKC_EXTRA_TEXT)?.takeIf { it.isNotBlank() }?.let { return it }
+        intent.getStringExtra(PgpIntentActions.OKC_EXTRA_TEXT_ACTION)?.takeIf { it.isNotBlank() }?.let { return it }
         if (Intent.ACTION_PROCESS_TEXT == intent.action) {
             intent.getCharSequenceExtra(Intent.EXTRA_PROCESS_TEXT)?.toString()
                 ?.takeIf { it.isNotBlank() }?.let { return it }

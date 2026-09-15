@@ -112,7 +112,7 @@ fun CreateKeyScreen(
                         value = AlgorithmLabels.uiLabel(algorithmType, rsaBits),
                         onValueChange = {},
                         readOnly = true,
-                        label = { Text("Algorithm") },
+                        label = { Text(stringResource(R.string.create_key_algorithm)) },
                         trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(algoMenuExpanded) },
                         modifier = Modifier
                             .menuAnchor()
@@ -142,10 +142,10 @@ fun CreateKeyScreen(
                             .padding(top = 8.dp),
                     ) {
                         OutlinedTextField(
-                            value = "RSA $rsaBits",
+                            value = stringResource(R.string.create_key_rsa_bits_fmt, rsaBits),
                             onValueChange = {},
                             readOnly = true,
-                            label = { Text("RSA key size") },
+                            label = { Text(stringResource(R.string.create_key_rsa_key_size)) },
                             trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(rsaMenuExpanded) },
                             modifier = Modifier
                                 .menuAnchor()
@@ -157,7 +157,7 @@ fun CreateKeyScreen(
                         ) {
                             PgpAlgorithmPolicy.allowedRsaBits.sorted().forEach { bits ->
                                 DropdownMenuItem(
-                                    text = { Text("RSA $bits") },
+                                    text = { Text(stringResource(R.string.create_key_rsa_bits_fmt, bits)) },
                                     onClick = {
                                         rsaBits = bits
                                         rsaMenuExpanded = false
@@ -167,15 +167,14 @@ fun CreateKeyScreen(
                         }
                     }
                     Text(
-                        "RSA generates three large primes (sign + encrypt + auth). " +
-                            "On a phone this often takes 20–90s — prefer Curve25519 for speed.",
+                        stringResource(R.string.create_key_rsa_speed_hint),
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         modifier = Modifier.padding(top = 8.dp),
                     )
                 } else {
                     Text(
-                        "Curve keys are near-instant; passphrase wrapping still takes a few seconds.",
+                        stringResource(R.string.create_key_curve_speed_hint),
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         modifier = Modifier.padding(top = 8.dp),
@@ -184,7 +183,7 @@ fun CreateKeyScreen(
                 OutlinedTextField(
                     value = userId,
                     onValueChange = { userId = it },
-                    label = { Text("Name <email@example.com>") },
+                    label = { Text(stringResource(R.string.create_key_user_id_label)) },
                     modifier = Modifier
                         .fillMaxWidth()
                         .padding(top = 8.dp),
@@ -221,7 +220,7 @@ fun CreateKeyScreen(
                     OutlinedTextField(
                         value = passphrase,
                         onValueChange = { passphrase = it },
-                        label = { Text("Passphrase") },
+                        label = { Text(stringResource(R.string.intent_passphrase)) },
                         visualTransformation = PasswordVisualTransformation(),
                         keyboardOptions = KeyboardOptions.Default,
                         modifier = Modifier
@@ -231,7 +230,7 @@ fun CreateKeyScreen(
                     OutlinedTextField(
                         value = confirm,
                         onValueChange = { confirm = it },
-                        label = { Text("Confirm passphrase") },
+                        label = { Text(stringResource(R.string.create_key_confirm_passphrase)) },
                         visualTransformation = PasswordVisualTransformation(),
                         keyboardOptions = KeyboardOptions.Default,
                         modifier = Modifier
@@ -254,9 +253,9 @@ fun CreateKeyScreen(
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
                     Column(modifier = Modifier.weight(1f)) {
-                        Text("OpenPGP v6 key (RFC 9580)")
+                        Text(stringResource(R.string.create_key_v6_title))
                         Text(
-                            "Native Ed25519/X25519 tags; limited OpenKeychain interop",
+                            stringResource(R.string.create_key_v6_subtitle),
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
@@ -308,7 +307,7 @@ fun CreateKeyScreen(
                 OutlinedTextField(
                     value = expiryYears,
                     onValueChange = { expiryYears = it.filter { ch -> ch.isDigit() } },
-                    label = { Text("Expiry (years, empty = none)") },
+                    label = { Text(stringResource(R.string.create_key_expiry_years)) },
                     modifier = Modifier
                         .fillMaxWidth()
                         .padding(top = 8.dp),
@@ -387,12 +386,15 @@ fun CreateKeyScreen(
                     Text(
                         if (loading) {
                             if (algorithmType == KeyAlgorithmType.RSA) {
-                                "Generating RSA keys (can take up to a minute)…"
+                                stringResource(R.string.create_key_generating_rsa)
                             } else {
-                                "Generating key…"
+                                stringResource(R.string.create_key_generating)
                             }
                         } else {
-                            "Generate ${AlgorithmLabels.forKeyType(algorithmType, rsaBits)} key"
+                            stringResource(
+                                R.string.create_key_generate_fmt,
+                                AlgorithmLabels.forKeyType(algorithmType, rsaBits),
+                            )
                         },
                     )
                 }

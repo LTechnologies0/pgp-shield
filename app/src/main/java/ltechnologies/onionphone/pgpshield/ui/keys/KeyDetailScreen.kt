@@ -55,6 +55,7 @@ import androidx.hilt.navigation.compose.hiltViewModel
 import ltechnologies.onionphone.pgpshield.R
 import ltechnologies.onionphone.pgpshield.data.KeyDetail
 import ltechnologies.onionphone.pgpshield.data.KeyRepository
+import ltechnologies.onionphone.pgpshield.data.KeySummary
 import ltechnologies.onionphone.pgpshield.engine.AlgorithmLabels
 import ltechnologies.onionphone.pgpshield.engine.PgpAlgorithmPolicy
 import ltechnologies.onionphone.pgpshield.engine.PgpOperators
@@ -69,6 +70,7 @@ import ltechnologies.onionphone.pgpshield.ui.components.AlgorithmChip
 import ltechnologies.onionphone.pgpshield.ui.components.ChipRow
 import ltechnologies.onionphone.pgpshield.ui.components.MonospaceScrollText
 import ltechnologies.onionphone.pgpshield.ui.components.RevokedBadge
+import ltechnologies.onionphone.pgpshield.ui.components.ExpiredBadge
 import ltechnologies.onionphone.pgpshield.ui.components.formatKeyDate
 import ltechnologies.onionphone.pgpshield.ui.components.formatKeyId
 import ltechnologies.onionphone.pgpshield.ui.components.rememberAdaptiveMetrics
@@ -196,9 +198,10 @@ fun KeyDetailScreen(
             ) {
                 ChipRow(modifier = Modifier.padding(top = 4.dp)) {
                     AlgorithmChip(summary.primaryAlgorithm)
-                    if (summary.isSecret) AlgorithmChip("Secret")
-                    if (summary.hardwareManagedPassphrase) AlgorithmChip("StrongBox passphrase")
+                    if (summary.isSecret) AlgorithmChip(stringResource(R.string.keys_secret))
+                    if (summary.hardwareManagedPassphrase) AlgorithmChip(stringResource(R.string.key_detail_chip_strongbox))
                     if (summary.isRevoked) RevokedBadge()
+                    if (summary.isExpired) ExpiredBadge()
                 }
 
                 val useSideBySide = metrics.isLandscape &&
@@ -229,14 +232,20 @@ fun KeyDetailScreen(
                                     scope.launch {
                                         val armored = detailViewModel.exportPublic(keyId)?.let { String(it, Charsets.UTF_8) }
                                         if (armored != null) shareText(context, armored, "public-key.asc")
-                                        status = if (armored != null) "Public key shared" else "Export failed"
+                                        status = context.getString(
+                                            if (armored != null) R.string.key_detail_status_public_shared
+                                            else R.string.key_detail_status_export_failed,
+                                        )
                                     }
                                 },
                                 onCopyPublic = {
                                     scope.launch {
                                         val armored = detailViewModel.exportPublic(keyId)?.let { String(it, Charsets.UTF_8) }
                                         if (armored != null) copyToClipboard(context, armored)
-                                        status = if (armored != null) "Public key copied" else "Copy failed"
+                                        status = context.getString(
+                                            if (armored != null) R.string.key_detail_status_public_copied
+                                            else R.string.key_detail_status_copy_failed,
+                                        )
                                     }
                                 },
                                 onChangePassphrase = { showPassphraseDialog = true },
@@ -251,7 +260,10 @@ fun KeyDetailScreen(
                                     listViewModel.setTrustLevel(keyId, level) {
                                         scope.launch {
                                             detail = detailViewModel.loadDetail(keyId)
-                                            status = "Trust set to ${trustLabel(level)}"
+                                            status = context.getString(
+                                                R.string.keys_trust_set_fmt,
+                                                trustLabel(context, level),
+                                            )
                                         }
                                     }
                                     showTrustMenu = false
@@ -264,13 +276,13 @@ fun KeyDetailScreen(
                                     listViewModel.refreshFromKeyserver(keyId) {
                                         scope.launch {
                                             detail = detailViewModel.loadDetail(keyId)
-                                            status = "Refreshed from keyserver"
+                                            status = context.getString(R.string.key_detail_status_refreshed)
                                         }
                                     }
                                 },
                                 onUploadPublic = {
                                     listViewModel.uploadPublicKey(keyId) {
-                                        status = "Public key uploaded — verify email on keys.openpgp.org if search by address is needed"
+                                        status = context.getString(R.string.key_detail_status_uploaded)
                                     }
                                 },
                                 onRevoke = { showRevokeDialog = true },
@@ -292,14 +304,20 @@ fun KeyDetailScreen(
                             scope.launch {
                                 val armored = detailViewModel.exportPublic(keyId)?.let { String(it, Charsets.UTF_8) }
                                 if (armored != null) shareText(context, armored, "public-key.asc")
-                                status = if (armored != null) "Public key shared" else "Export failed"
+                                status = context.getString(
+                                    if (armored != null) R.string.key_detail_status_public_shared
+                                    else R.string.key_detail_status_export_failed,
+                                )
                             }
                         },
                         onCopyPublic = {
                             scope.launch {
                                 val armored = detailViewModel.exportPublic(keyId)?.let { String(it, Charsets.UTF_8) }
                                 if (armored != null) copyToClipboard(context, armored)
-                                status = if (armored != null) "Public key copied" else "Copy failed"
+                                status = context.getString(
+                                    if (armored != null) R.string.key_detail_status_public_copied
+                                    else R.string.key_detail_status_copy_failed,
+                                )
                             }
                         },
                         onChangePassphrase = { showPassphraseDialog = true },
@@ -314,7 +332,10 @@ fun KeyDetailScreen(
                             listViewModel.setTrustLevel(keyId, level) {
                                 scope.launch {
                                     detail = detailViewModel.loadDetail(keyId)
-                                    status = "Trust set to ${trustLabel(level)}"
+                                    status = context.getString(
+                                        R.string.keys_trust_set_fmt,
+                                        trustLabel(context, level),
+                                    )
                                 }
                             }
                             showTrustMenu = false
@@ -327,13 +348,13 @@ fun KeyDetailScreen(
                             listViewModel.refreshFromKeyserver(keyId) {
                                 scope.launch {
                                     detail = detailViewModel.loadDetail(keyId)
-                                    status = "Refreshed from keyserver"
+                                    status = context.getString(R.string.key_detail_status_refreshed)
                                 }
                             }
                         },
                         onUploadPublic = {
                             listViewModel.uploadPublicKey(keyId) {
-                                status = "Public key uploaded — verify email on keys.openpgp.org if search by address is needed"
+                                status = context.getString(R.string.key_detail_status_uploaded)
                             }
                         },
                         onRevoke = { showRevokeDialog = true },
@@ -372,7 +393,7 @@ fun KeyDetailScreen(
                 listViewModel.addSubkey(keyId, passphrase, subkeyType, rsaBits, expirySeconds) {
                     scope.launch {
                         detail = detailViewModel.loadDetail(keyId)
-                        status = "Subkey added"
+                        status = context.getString(R.string.key_detail_status_subkey_added)
                     }
                 }
             },
@@ -397,7 +418,7 @@ fun KeyDetailScreen(
                 listViewModel.exportRevocationCert(keyId, pass, reason) { cert ->
                     scope.launch {
                         shareText(context, String(cert, Charsets.UTF_8), "revocation.asc")
-                        status = "Revocation cert exported"
+                        status = context.getString(R.string.key_detail_status_revocation_exported)
                     }
                 }
             },
@@ -425,7 +446,7 @@ fun KeyDetailScreen(
                 listViewModel.certifyKey(certifier, keyId, pass, uid) {
                     scope.launch {
                         detail = detailViewModel.loadDetail(keyId)
-                        status = "Key certified"
+                        status = context.getString(R.string.key_detail_status_certified)
                     }
                 }
             },
@@ -450,7 +471,7 @@ fun KeyDetailScreen(
                 listViewModel.addUserId(keyId, pass, uid) {
                     scope.launch {
                         detail = detailViewModel.loadDetail(keyId)
-                        status = "User ID added"
+                        status = context.getString(R.string.key_detail_status_user_id_added)
                     }
                 }
             },
@@ -473,30 +494,33 @@ fun KeyDetailScreen(
                 newPassphrase = ""
                 showPassphraseDialog = false
                 listViewModel.changePassphrase(keyId, old, new) {
-                    status = "Passphrase changed"
+                    status = context.getString(R.string.key_detail_status_passphrase_changed)
                 }
             },
         )
         DestructiveConfirmDialog(
             visible = showSecretExportDialog,
-            title = "Export secret key?",
-            message = "This includes private key material. Only share with trusted apps.",
-            confirmLabel = "Export",
+            title = stringResource(R.string.key_detail_export_secret_title),
+            message = stringResource(R.string.key_detail_export_secret_message),
+            confirmLabel = stringResource(R.string.common_export),
             onDismiss = { showSecretExportDialog = false },
             onConfirm = {
                 showSecretExportDialog = false
                 scope.launch {
                     val armored = detailViewModel.exportSecret(keyId)?.let { String(it, Charsets.UTF_8) }
                     if (armored != null) shareText(context, armored, "secret-key.asc")
-                    status = if (armored != null) "Secret key shared" else "Export failed"
+                    status = context.getString(
+                        if (armored != null) R.string.key_detail_status_secret_shared
+                        else R.string.key_detail_status_export_failed,
+                    )
                 }
             },
         )
         DestructiveConfirmDialog(
             visible = showRevokeDialog,
-            title = "Revoke key?",
-            message = "Marks the key revoked in PGP Shield. Does not publish a revocation certificate.",
-            confirmLabel = "Revoke",
+            title = stringResource(R.string.key_detail_revoke_title),
+            message = stringResource(R.string.key_detail_revoke_message),
+            confirmLabel = stringResource(R.string.common_revoke),
             onDismiss = { showRevokeDialog = false },
             onConfirm = {
                 showRevokeDialog = false
@@ -504,16 +528,16 @@ fun KeyDetailScreen(
                 listViewModel.revokeKey(keyId) {
                     scope.launch {
                         detail = detailViewModel.loadDetail(keyId)
-                        status = "Key marked revoked"
+                        status = context.getString(R.string.key_detail_status_revoked)
                     }
                 }
             },
         )
         DestructiveConfirmDialog(
             visible = showDeleteDialog,
-            title = "Delete key?",
-            message = "Removes the key from this device. This cannot be undone.",
-            confirmLabel = "Delete",
+            title = stringResource(R.string.key_detail_delete_title),
+            message = stringResource(R.string.key_detail_delete_message),
+            confirmLabel = stringResource(R.string.common_delete),
             onDismiss = { showDeleteDialog = false },
             onConfirm = {
                 showDeleteDialog = false
@@ -531,23 +555,24 @@ private fun TrustLevelDropdown(
     onExpandedChange: (Boolean) -> Unit,
     onSelect: (Int) -> Unit,
 ) {
+    val context = LocalContext.current
     ExposedDropdownMenuBox(
         expanded = expanded,
         onExpandedChange = onExpandedChange,
         modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
     ) {
         OutlinedTextField(
-            value = trustLabel(trustLevel),
+            value = trustLabel(context, trustLevel),
             onValueChange = {},
             readOnly = true,
-            label = { Text("Trust level") },
+            label = { Text(stringResource(R.string.key_detail_trust_level)) },
             trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded) },
             modifier = Modifier.menuAnchor().fillMaxWidth(),
         )
         ExposedDropdownMenu(expanded = expanded, onDismissRequest = { onExpandedChange(false) }) {
             (0..3).forEach { level ->
                 DropdownMenuItem(
-                    text = { Text(trustLabel(level)) },
+                    text = { Text(trustLabel(context, level)) },
                     onClick = { onSelect(level) },
                 )
             }
@@ -568,22 +593,22 @@ private fun ChangePassphraseSheet(
 ) {
     FormBottomSheet(
         visible = visible,
-        title = "Change passphrase",
+        title = stringResource(R.string.key_detail_change_passphrase_title),
         onDismiss = onDismiss,
-        confirmLabel = "Change",
+        confirmLabel = stringResource(R.string.common_change),
         onConfirm = onConfirm,
     ) {
         OutlinedTextField(
             value = oldPassphrase,
             onValueChange = onOldPassphraseChange,
-            label = { Text("Current passphrase") },
+            label = { Text(stringResource(R.string.key_detail_current_passphrase)) },
             visualTransformation = PasswordVisualTransformation(),
             modifier = Modifier.fillMaxWidth().padding(top = 12.dp),
         )
         OutlinedTextField(
             value = newPassphrase,
             onValueChange = onNewPassphraseChange,
-            label = { Text("New passphrase") },
+            label = { Text(stringResource(R.string.key_detail_new_passphrase)) },
             visualTransformation = PasswordVisualTransformation(),
             modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
         )
@@ -603,23 +628,23 @@ private fun AddUserIdSheet(
 ) {
     FormBottomSheet(
         visible = visible,
-        title = "Add user ID",
+        title = stringResource(R.string.key_detail_add_user_id_title),
         onDismiss = onDismiss,
-        confirmLabel = "Add",
+        confirmLabel = stringResource(R.string.common_add),
         onConfirm = onConfirm,
         confirmEnabled = userId.isNotBlank() && passphrase.isNotEmpty(),
     ) {
         OutlinedTextField(
             value = userId,
             onValueChange = onUserIdChange,
-            label = { Text("User ID") },
-            placeholder = { Text("Name <email@example.com>") },
+            label = { Text(stringResource(R.string.key_detail_user_id_label)) },
+            placeholder = { Text(stringResource(R.string.create_key_user_id_label)) },
             modifier = Modifier.fillMaxWidth().padding(top = 12.dp),
         )
         OutlinedTextField(
             value = passphrase,
             onValueChange = onPassphraseChange,
-            label = { Text("Passphrase") },
+            label = { Text(stringResource(R.string.intent_passphrase)) },
             visualTransformation = PasswordVisualTransformation(),
             modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
         )
@@ -639,22 +664,22 @@ private fun RevocationCertSheet(
 ) {
     FormBottomSheet(
         visible = visible,
-        title = "Export revocation certificate",
+        title = stringResource(R.string.key_detail_export_revocation_title),
         onDismiss = onDismiss,
-        confirmLabel = "Export",
+        confirmLabel = stringResource(R.string.common_export),
         onConfirm = onConfirm,
     ) {
         OutlinedTextField(
             value = passphrase,
             onValueChange = onPassphraseChange,
-            label = { Text("Passphrase") },
+            label = { Text(stringResource(R.string.intent_passphrase)) },
             visualTransformation = PasswordVisualTransformation(),
             modifier = Modifier.fillMaxWidth().padding(top = 12.dp),
         )
         OutlinedTextField(
             value = reason,
             onValueChange = onReasonChange,
-            label = { Text("Reason (optional)") },
+            label = { Text(stringResource(R.string.key_detail_reason_optional)) },
             modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
         )
     }
@@ -678,9 +703,9 @@ private fun CertifyKeySheet(
     var certifierMenu by remember { mutableStateOf(false) }
     FormBottomSheet(
         visible = visible,
-        title = "Certify key",
+        title = stringResource(R.string.key_detail_certify_title),
         onDismiss = onDismiss,
-        confirmLabel = "Certify",
+        confirmLabel = stringResource(R.string.key_detail_certify_action),
         onConfirm = onConfirm,
         confirmEnabled = passphrase.isNotEmpty() && userId.isNotBlank(),
     ) {
@@ -689,12 +714,13 @@ private fun CertifyKeySheet(
             onExpandedChange = { certifierMenu = it },
             modifier = Modifier.fillMaxWidth().padding(top = 12.dp),
         ) {
-            val label = keys.find { it.masterKeyId == certifierId }?.primaryUserId ?: "Select certifier"
+            val label = keys.find { it.masterKeyId == certifierId }?.primaryUserId
+                ?: stringResource(R.string.key_detail_select_certifier)
             OutlinedTextField(
                 value = label,
                 onValueChange = {},
                 readOnly = true,
-                label = { Text("Certifier secret key") },
+                label = { Text(stringResource(R.string.key_detail_certifier_secret_key)) },
                 trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(certifierMenu) },
                 modifier = Modifier.menuAnchor().fillMaxWidth(),
             )
@@ -713,14 +739,14 @@ private fun CertifyKeySheet(
         OutlinedTextField(
             value = userId,
             onValueChange = onUserIdChange,
-            label = { Text("User ID to certify") },
+            label = { Text(stringResource(R.string.key_detail_user_id_to_certify)) },
             placeholder = { Text(targetUserIds.firstOrNull() ?: "") },
             modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
         )
         OutlinedTextField(
             value = passphrase,
             onValueChange = onPassphraseChange,
-            label = { Text("Certifier passphrase") },
+            label = { Text(stringResource(R.string.key_detail_certifier_passphrase)) },
             visualTransformation = PasswordVisualTransformation(),
             modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
         )
@@ -752,12 +778,12 @@ private fun AddSubkeySheet(
 
     FormBottomSheet(
         visible = visible,
-        title = "Add subkey",
+        title = stringResource(R.string.key_detail_add_subkey_title),
         onDismiss = {
             passphrase = ""
             onDismiss()
         },
-        confirmLabel = "Add",
+        confirmLabel = stringResource(R.string.common_add),
         onConfirm = {
             val pass = passphrase.toCharArray()
             passphrase = ""
@@ -776,7 +802,7 @@ private fun AddSubkeySheet(
                 value = AlgorithmLabels.forSubkeyType(subkeyType),
                 onValueChange = {},
                 readOnly = true,
-                label = { Text("Subkey type") },
+                label = { Text(stringResource(R.string.key_detail_subkey_type)) },
                 trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(typeMenuExpanded) },
                 modifier = Modifier.menuAnchor().fillMaxWidth(),
             )
@@ -802,10 +828,10 @@ private fun AddSubkeySheet(
                 modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
             ) {
                 OutlinedTextField(
-                    value = "RSA $rsaBits",
+                    value = stringResource(R.string.create_key_rsa_bits_fmt, rsaBits),
                     onValueChange = {},
                     readOnly = true,
-                    label = { Text("RSA key size") },
+                    label = { Text(stringResource(R.string.create_key_rsa_key_size)) },
                     trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(rsaMenuExpanded) },
                     modifier = Modifier.menuAnchor().fillMaxWidth(),
                 )
@@ -815,7 +841,7 @@ private fun AddSubkeySheet(
                 ) {
                     PgpAlgorithmPolicy.allowedRsaBits.sorted().forEach { bits ->
                         DropdownMenuItem(
-                            text = { Text("RSA $bits") },
+                            text = { Text(stringResource(R.string.create_key_rsa_bits_fmt, bits)) },
                             onClick = {
                                 rsaBits = bits
                                 rsaMenuExpanded = false
@@ -828,14 +854,14 @@ private fun AddSubkeySheet(
         OutlinedTextField(
             value = passphrase,
             onValueChange = { passphrase = it },
-            label = { Text("Passphrase") },
+            label = { Text(stringResource(R.string.intent_passphrase)) },
             visualTransformation = PasswordVisualTransformation(),
             modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
         )
         OutlinedTextField(
             value = expiryYears,
             onValueChange = { expiryYears = it.filter { ch -> ch.isDigit() } },
-            label = { Text("Expiry (years, empty = none)") },
+            label = { Text(stringResource(R.string.create_key_expiry_years)) },
             modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
         )
     }
@@ -871,19 +897,20 @@ private fun KeyDetailSectionCard(
 
 @Composable
 private fun KeyDetailIdentitySection(summary: ltechnologies.onionphone.pgpshield.data.KeySummary) {
-    KeyDetailSectionCard(title = "Identity") {
-        Text("Key ID: ${formatKeyId(summary.masterKeyId)}")
-        MonospaceScrollText("Fingerprint: ${summary.fingerprint}")
-        Text("Created: ${formatKeyDate(summary.createdAt)}")
-        Text("Subkeys: ${summary.subkeyCount}")
-        Text("Trust: ${trustLabel(summary.trustLevel)}")
+    val context = LocalContext.current
+    KeyDetailSectionCard(title = stringResource(R.string.key_detail_section_identity)) {
+        Text(stringResource(R.string.key_detail_key_id_fmt, formatKeyId(summary.masterKeyId)))
+        MonospaceScrollText(stringResource(R.string.key_detail_fingerprint_fmt, summary.fingerprint))
+        Text(stringResource(R.string.key_detail_created_fmt, formatKeyDate(summary.createdAt)))
+        Text(stringResource(R.string.key_detail_subkey_count_fmt, summary.subkeyCount))
+        Text(stringResource(R.string.keys_trust_label_fmt, trustLabel(context, summary.trustLevel)))
     }
 }
 
 @Composable
 private fun KeyDetailSubkeysSection(subkeys: List<ltechnologies.onionphone.pgpshield.engine.model.SubkeyInfo>) {
     if (subkeys.isEmpty()) return
-    KeyDetailSectionCard(title = "Subkeys") {
+    KeyDetailSectionCard(title = stringResource(R.string.key_detail_section_subkeys)) {
         subkeys.forEach { sub ->
             Column(
                 modifier = Modifier
@@ -898,10 +925,20 @@ private fun KeyDetailSubkeysSection(subkeys: List<ltechnologies.onionphone.pgpsh
                     style = MaterialTheme.typography.labelSmall,
                 )
                 Text(
-                    "Created ${formatKeyDate(sub.creationTime.toEpochMilli())}",
+                    stringResource(R.string.keys_created_fmt, formatKeyDate(sub.creationTime.toEpochMilli())),
+                    style = MaterialTheme.typography.labelSmall,
+                )
+                val exp = sub.expirationTime
+                Text(
+                    if (exp != null) {
+                        stringResource(R.string.keys_expires_fmt, formatKeyDate(exp.toEpochMilli()))
+                    } else {
+                        stringResource(R.string.keys_no_expiry)
+                    },
                     style = MaterialTheme.typography.labelSmall,
                 )
                 if (sub.isRevoked) RevokedBadge()
+                if (exp != null && !exp.isAfter(java.time.Instant.now())) ExpiredBadge()
             }
         }
     }
@@ -916,12 +953,12 @@ private fun KeyDetailExportSection(
     onChangePassphrase: () -> Unit,
     onExportSecret: () -> Unit,
 ) {
-    KeyDetailSectionCard(title = "Export") {
+    KeyDetailSectionCard(title = stringResource(R.string.key_detail_section_export)) {
         OutlinedButton(onClick = onSharePublic, modifier = Modifier.fillMaxWidth()) {
-            Text("Export public key (share)")
+            Text(stringResource(R.string.key_detail_export_public_share))
         }
         OutlinedButton(onClick = onCopyPublic, modifier = Modifier.fillMaxWidth()) {
-            Text("Copy public key")
+            Text(stringResource(R.string.key_detail_copy_public))
         }
         if (isSecret) {
             if (hardwareManagedPassphrase) {
@@ -933,10 +970,10 @@ private fun KeyDetailExportSection(
                 )
             } else {
                 OutlinedButton(onClick = onChangePassphrase, modifier = Modifier.fillMaxWidth()) {
-                    Text("Change passphrase…")
+                    Text(stringResource(R.string.key_detail_change_passphrase))
                 }
                 OutlinedButton(onClick = onExportSecret, modifier = Modifier.fillMaxWidth()) {
-                    Text("Export secret key…")
+                    Text(stringResource(R.string.key_detail_export_secret))
                 }
             }
         }
@@ -959,26 +996,26 @@ private fun KeyDetailManageSection(
     onRevoke: () -> Unit,
     onDelete: () -> Unit,
 ) {
-    KeyDetailSectionCard(title = "Manage") {
+    KeyDetailSectionCard(title = stringResource(R.string.key_detail_section_manage)) {
         if (summary.isSecret && !summary.isRevoked) {
             OutlinedButton(onClick = onAddSubkey, modifier = Modifier.fillMaxWidth()) {
-                Text("Add subkey…")
+                Text(stringResource(R.string.key_detail_add_subkey))
             }
             OutlinedButton(onClick = onAddUserId, modifier = Modifier.fillMaxWidth()) {
-                Text("Add user ID…")
+                Text(stringResource(R.string.key_detail_add_user_id))
             }
             OutlinedButton(onClick = onExportRevocation, modifier = Modifier.fillMaxWidth()) {
-                Text("Export revocation cert…")
+                Text(stringResource(R.string.key_detail_export_revocation))
             }
         }
         OutlinedButton(onClick = onCertify, modifier = Modifier.fillMaxWidth()) {
-            Text("Certify key…")
+            Text(stringResource(R.string.key_detail_certify))
         }
         OutlinedButton(onClick = onRefreshKeyserver, modifier = Modifier.fillMaxWidth()) {
-            Text("Refresh from keyserver")
+            Text(stringResource(R.string.key_detail_refresh_keyserver))
         }
         OutlinedButton(onClick = onUploadPublic, modifier = Modifier.fillMaxWidth()) {
-            Text("Upload public key")
+            Text(stringResource(R.string.key_detail_upload_public))
         }
         TrustLevelDropdown(
             trustLevel = trustLevel,
@@ -988,21 +1025,23 @@ private fun KeyDetailManageSection(
         )
         if (!summary.isRevoked) {
             OutlinedButton(onClick = onRevoke, modifier = Modifier.fillMaxWidth()) {
-                Text("Revoke key")
+                Text(stringResource(R.string.keys_revoke))
             }
         }
         OutlinedButton(onClick = onDelete, modifier = Modifier.fillMaxWidth()) {
-            Text("Delete key")
+            Text(stringResource(R.string.keys_delete))
         }
     }
 }
 
-private fun trustLabel(level: Int): String = when (level) {
-    1 -> "Marginal"
-    2 -> "Full"
-    3 -> "Never"
-    else -> "Unknown"
-}
+private fun trustLabel(context: Context, level: Int): String = context.getString(
+    when (level) {
+        KeySummary.TRUST_MARGINAL -> R.string.keys_trust_marginal
+        KeySummary.TRUST_FULL -> R.string.keys_trust_full
+        KeySummary.TRUST_NEVER -> R.string.keys_trust_never
+        else -> R.string.keys_trust_unknown
+    },
+)
 
 private fun copyToClipboard(context: Context, text: String) {
     SensitiveClipboard.copy(context, "pgp-key", text)
@@ -1014,5 +1053,5 @@ private fun shareText(context: Context, text: String, filename: String) {
         putExtra(Intent.EXTRA_TEXT, text)
         putExtra(Intent.EXTRA_SUBJECT, filename)
     }
-    context.startActivity(Intent.createChooser(intent, "Share key"))
+    context.startActivity(Intent.createChooser(intent, context.getString(R.string.keys_share)))
 }

@@ -17,6 +17,12 @@ import javax.crypto.SecretKeyFactory
  * Creates AES-256-GCM AndroidKeyStore keys, preferring StrongBox then TEE.
  *
  * Soft Keystore keys are rejected when [requireInsideSecureHardware] is true.
+ *
+ * New keys request:
+ * - [KeyGenParameterSpec.Builder.setUnlockedDeviceRequired] (API 28+) so material is
+ *   unusable while the device lock screen is held
+ * - [KeyGenParameterSpec.Builder.setInvalidatedByBiometricEnrollment] when auth-bound
+ *   so biometric enrollment changes invalidate the wrapping key
  */
 object StrongBoxAesKeyFactory {
     private const val ANDROID_KEYSTORE = "AndroidKeyStore"
@@ -28,6 +34,12 @@ object StrongBoxAesKeyFactory {
         val strongBoxBacked: Boolean?,
         val insideSecureHardware: Boolean,
         val userAuthenticationRequired: Boolean,
+        /** API 28+; null when unknown / older platform. */
+        val unlockedDeviceRequired: Boolean? = null,
+        /** Auth-bound keys only; null when not applicable / unknown. */
+        val invalidatedByBiometricEnrollment: Boolean? = null,
+        /** Whether user-auth is enforced by the secure hardware (not soft KS). */
+        val userAuthEnforcedBySecureHardware: Boolean? = null,
     )
 
     /** True when the device advertises StrongBox Keystore (API 28+). */
@@ -72,18 +84,18 @@ object StrongBoxAesKeyFactory {
                     }
                 }
                 Timber.i(
-                    "Created Keystore AES key alias=%s strongBox=%s hardware=%s auth=%s",
+                    "Created Keystore AES key alias=%s strongBox=%s hardware=%s auth=%s unlockedDevice=%s",
                     alias,
                     handle.strongBoxBacked,
                     handle.insideSecureHardware,
                     handle.userAuthenticationRequired,
+                    handle.unlockedDeviceRequired,
                 )
                 return handle
             } catch (e: StrongBoxUnavailableException) {
                 Timber.w(e, "StrongBox unavailable for %s — TEE fallback", alias)
             } catch (e: Exception) {
                 Timber.w(e, "StrongBox key gen failed for %s — TEE fallback", alias)
-                // Delete partial alias if any.
                 runCatching { delete(alias) }
             }
         }
@@ -100,20 +112,24 @@ object StrongBoxAesKeyFactory {
             }
         }
         Timber.i(
-            "Created Keystore AES key alias=%s strongBox=%s hardware=%s auth=%s",
+            "Created Keystore AES key alias=%s strongBox=%s hardware=%s auth=%s unlockedDevice=%s",
             alias,
             handle.strongBoxBacked,
             handle.insideSecureHardware,
             handle.userAuthenticationRequired,
+            handle.unlockedDeviceRequired,
         )
         return handle
     }
 
-    fun inspect(alias: String): KeyHandle? = load(alias)?.let { inspect(it, alias) }
+    fun inspect(alias: String): KeyHandle? =
+        runCatching { load(alias)?.let { inspect(it, alias) } }.getOrNull()
 
     fun delete(alias: String) {
-        val ks = KeyStore.getInstance(ANDROID_KEYSTORE).apply { load(null) }
-        if (ks.containsAlias(alias)) ks.deleteEntry(alias)
+        runCatching {
+            val ks = KeyStore.getInstance(ANDROID_KEYSTORE).apply { load(null) }
+            if (ks.containsAlias(alias)) ks.deleteEntry(alias)
+        }
     }
 
     /** AES/GCM transform used with keys from this factory. */
@@ -150,6 +166,13 @@ object StrongBoxAesKeyFactory {
                 @Suppress("DEPRECATION")
                 builder.setUserAuthenticationValidityDurationSeconds(0)
             }
+            // Biometric enrollment change → key unusable (must re-seal passphrases).
+            builder.setInvalidatedByBiometricEnrollment(true)
+        }
+
+        // Device lock screen held → Keystore refuses crypto ops (FBE + LSKF binding).
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+            builder.setUnlockedDeviceRequired(true)
         }
 
         if (requestStrongBox && Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
@@ -170,12 +193,22 @@ object StrongBoxAesKeyFactory {
         }
         @Suppress("DEPRECATION")
         val hardware = info.isInsideSecureHardware
+        val unlockedRequired = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+            runCatching { info.isUnlockedDeviceRequired }.getOrNull()
+        } else {
+            null
+        }
+        val invalidated = runCatching { info.isInvalidatedByBiometricEnrollment }.getOrNull()
+        val authEnforcedHw = runCatching { info.isUserAuthenticationRequirementEnforcedBySecureHardware }.getOrNull()
         return KeyHandle(
             key = key,
             alias = alias,
             strongBoxBacked = strongBox,
             insideSecureHardware = hardware,
             userAuthenticationRequired = info.isUserAuthenticationRequired,
+            unlockedDeviceRequired = unlockedRequired,
+            invalidatedByBiometricEnrollment = invalidated,
+            userAuthEnforcedBySecureHardware = authEnforcedHw,
         )
     }
 }

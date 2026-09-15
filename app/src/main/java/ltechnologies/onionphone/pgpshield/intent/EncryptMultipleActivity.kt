@@ -132,10 +132,11 @@ class EncryptMultipleActivity : LockedIntentActivity() {
 
     private suspend fun encryptAndDeliver() {
         val uris = readAllUris()
-        if (uris.isEmpty()) error("No files in intent")
+        if (uris.isEmpty()) error(getString(R.string.intent_no_files_in_intent))
         val sourcePaths = intent.getStringArrayListExtra(PgpIntentActions.EXTRA_SOURCE_PATHS)
-        val public = IntentIoHelper.loadEncryptPublicKey(keyRepository, settingsRepository)
+        val public = IntentIoHelper.loadEncryptPublicKey(this, keyRepository, settingsRepository, intent)
         val integrationMode = !sourcePaths.isNullOrEmpty()
+        val asciiArmor = IntentIoHelper.readOkcAsciiArmor(intent, default = false)
 
         data class Loaded(val index: Int, val name: String, val bytes: ByteArray, val path: String?)
 
@@ -150,7 +151,7 @@ class EncryptMultipleActivity : LockedIntentActivity() {
                 }
             }.mapNotNull { it.await() }
         }
-        if (loaded.isEmpty()) error("Could not read any files")
+        if (loaded.isEmpty()) error(getString(R.string.intent_could_not_read_any_files))
 
         val results = withContext(Dispatchers.Default) {
             cryptoOperations.encryptMany(
@@ -158,11 +159,12 @@ class EncryptMultipleActivity : LockedIntentActivity() {
                     ltechnologies.onionphone.pgpshield.engine.EncryptPlaintext(
                         plaintext = it.bytes,
                         fileName = it.name,
-                        asciiArmor = false,
+                        asciiArmor = asciiArmor,
                     )
                 },
                 recipientPublicArmored = listOf(public),
                 parallelism = 4,
+                allowMdcDegrade = true,
             )
         }
 
@@ -170,10 +172,10 @@ class EncryptMultipleActivity : LockedIntentActivity() {
             var encryptedCount = 0
             loaded.zip(results).forEach { (item, encrypted) ->
                 val path = item.path ?: return@forEach
-                IntentResultWriter.writeEncryptedForCaller(intent, path, encrypted.ciphertext)
+                IntentResultWriter.writeEncryptedForCaller(this, intent, path, encrypted.ciphertext)
                 encryptedCount++
             }
-            if (encryptedCount == 0) error("Could not encrypt any files")
+            if (encryptedCount == 0) error(getString(R.string.intent_could_not_encrypt_any_files))
             IntentResultWriter.finishOk(this)
             return
         }
@@ -188,7 +190,7 @@ class EncryptMultipleActivity : LockedIntentActivity() {
                 out,
             )
         }
-        if (outUris.isEmpty()) error("Could not encrypt any files")
+        if (outUris.isEmpty()) error(getString(R.string.intent_could_not_encrypt_any_files))
         shareEncryptedFiles(ArrayList(outUris))
     }
 

@@ -30,9 +30,15 @@ data class HardwareSecurityReport(
     /** Auth-bound passphrase wrapping key (StrongBox preferred). */
     val passphraseKeyStrongBox: Boolean? = null,
     val passphraseKeyHardwareBacked: Boolean? = null,
-    /** S/MIME private-key sealing key (StrongBox preferred, no per-op auth). */
+    /** S/MIME private-key sealing key (StrongBox preferred; unlocked-device required on new keys). */
     val smimeKeyStrongBox: Boolean? = null,
     val smimeKeyHardwareBacked: Boolean? = null,
+    /** Passphrase wrapping key requires unlocked device (API 28+). */
+    val passphraseUnlockedDeviceRequired: Boolean? = null,
+    /** Passphrase wrapping key invalidated when biometrics are re-enrolled. */
+    val passphraseInvalidatedByBiometricEnrollment: Boolean? = null,
+    /** User-auth requirement enforced by secure hardware (not soft Keystore). */
+    val passphraseAuthEnforcedBySecureHardware: Boolean? = null,
     /** Manifest-requested MTE mode: async / sync / off / unknown. */
     val memtagRequested: String,
     /** Runtime MTE mode from prctl, or off / unsupported. */
@@ -69,7 +75,9 @@ object HardwareSecurityCapabilities {
         ) == BiometricManager.BIOMETRIC_SUCCESS
 
         val (isStrongBox, isHardware) = inspectKey(vaultKeyAlias)
-        val (passStrongBox, passHardware) = inspectKey(HardwarePassphraseVault.ALIAS)
+        val passHandle = StrongBoxAesKeyFactory.inspect(HardwarePassphraseVault.ALIAS)
+        val passStrongBox = passHandle?.strongBoxBacked
+        val passHardware = passHandle?.insideSecureHardware
         val (smimeStrongBox, smimeHardware) = inspectKey(SmimeCertificateStore.SMIME_KEY_ALIAS)
         val appInfo = runCatching {
             pm.getApplicationInfo(context.packageName, 0)
@@ -104,6 +112,8 @@ object HardwareSecurityCapabilities {
                 passHardware == false -> append("software")
                 else -> append("pending")
             }
+            if (passHandle?.unlockedDeviceRequired == true) append("+LCK")
+            if (passHandle?.invalidatedByBiometricEnrollment == true) append("+BIOINV")
             append(" · smime=")
             when {
                 smimeStrongBox == true -> append("StrongBox")
@@ -124,6 +134,9 @@ object HardwareSecurityCapabilities {
             passphraseKeyHardwareBacked = passHardware,
             smimeKeyStrongBox = smimeStrongBox,
             smimeKeyHardwareBacked = smimeHardware,
+            passphraseUnlockedDeviceRequired = passHandle?.unlockedDeviceRequired,
+            passphraseInvalidatedByBiometricEnrollment = passHandle?.invalidatedByBiometricEnrollment,
+            passphraseAuthEnforcedBySecureHardware = passHandle?.userAuthEnforcedBySecureHardware,
             memtagRequested = memtagRequested,
             memtagRuntime = memtagRuntime,
             gwpAsanRequested = gwpAsan,

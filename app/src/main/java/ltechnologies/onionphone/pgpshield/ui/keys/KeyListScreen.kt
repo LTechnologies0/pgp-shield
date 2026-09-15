@@ -54,6 +54,7 @@ import ltechnologies.onionphone.pgpshield.ui.components.EmptyState
 import ltechnologies.onionphone.pgpshield.ui.components.KeyAvatar
 import ltechnologies.onionphone.pgpshield.ui.components.M3ListCard
 import ltechnologies.onionphone.pgpshield.ui.components.RevokedBadge
+import ltechnologies.onionphone.pgpshield.ui.components.ExpiredBadge
 import ltechnologies.onionphone.pgpshield.ui.components.SectionHeader
 import ltechnologies.onionphone.pgpshield.ui.components.WindowLayout
 import ltechnologies.onionphone.pgpshield.ui.components.formatKeyDate
@@ -265,6 +266,9 @@ private fun KeyRow(
                     }
                     if (key.isRevoked) {
                         RevokedBadge()
+                    }
+                    if (key.isExpired) {
+                        ExpiredBadge()
                     }
                 }
             }

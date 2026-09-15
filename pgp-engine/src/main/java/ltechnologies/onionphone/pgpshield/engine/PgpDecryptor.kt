@@ -24,9 +24,12 @@ import org.bouncycastle.openpgp.PGPSecretKeyRing
 import org.bouncycastle.openpgp.PGPSignature
 import org.bouncycastle.openpgp.PGPSignatureList
 import org.bouncycastle.openpgp.PGPUtil
+import org.bouncycastle.openpgp.PGPSessionKey
 import org.bouncycastle.openpgp.operator.bc.BcPBEDataDecryptorFactory
 import org.bouncycastle.openpgp.operator.bc.BcPublicKeyDataDecryptorFactory
+import org.bouncycastle.openpgp.operator.bc.BcSessionKeyDataDecryptorFactory
 import org.bouncycastle.openpgp.operator.jcajce.JcePublicKeyDataDecryptorFactoryBuilder
+import java.nio.ByteBuffer
 
 /**
  * Parameters for decrypting an OpenPGP message.
@@ -42,6 +45,12 @@ data class DecryptRequest(
     val signerPublicKeyRingsArmored: List<ByteArray> = emptyList(),
     /** Optional hardware token for divert-to-card secret keys. */
     val smartCard: SmartCardPort? = null,
+    /**
+     * Cached clear session key from a prior [DecryptResult] (OpenPGP API
+     * `EXTRA_DECRYPTION_RESULT`). When set, PKESK unlock skips the passphrase.
+     * Wire format: first byte = symmetric algorithm tag, remainder = key bytes.
+     */
+    val cachedDecryptedSessionKey: ByteArray? = null,
 )
 
 /**
@@ -53,6 +62,8 @@ data class DecryptRequest(
  * @property signatureValid Embedded signature verified, or `null` if none.
  * @property signerKeyId Key ID of an embedded signature, if any.
  * @property securityProblems Always empty on success (kept for API stability).
+ * @property sessionKey Opaque encrypted-session marker for API caching (key id bytes).
+ * @property decryptedSessionKey Clear session key (`algo` + key material) for API reuse.
  */
 data class DecryptResult(
     val plaintext: ByteArray,
@@ -61,6 +72,14 @@ data class DecryptResult(
     val signatureValid: Boolean? = null,
     val signerKeyId: Long? = null,
     val securityProblems: List<SecurityProblem> = emptyList(),
+    val sessionKey: ByteArray? = null,
+    val decryptedSessionKey: ByteArray? = null,
+    /** Literal packet modification time (ms since epoch), or `0` if unknown. */
+    val modificationTimeMs: Long = 0L,
+    /** Guessed MIME from literal format (`t`/`u` → text/plain, else octet-stream). */
+    val mimeType: String? = null,
+    /** Embedded signature creation time (ms), when present. */
+    val signatureTimestampMs: Long? = null,
 )
 
 /** Decrypts OpenPGP messages and validates integrity protection. */
@@ -89,32 +108,52 @@ class PgpDecryptor {
         var clearFactory: PGPObjectFactory? = null
         var lastError: Exception? = null
         var sawChecksumMismatch = false
+        var sessionKeyOut: ByteArray? = null
+        var decryptedSessionKeyOut: ByteArray? = null
+
+        val cachedSession = parseCachedSessionKey(request.cachedDecryptedSessionKey)
 
         val pbeIter = encryptedList.encryptedDataObjects
         while (pbeIter.hasNext()) {
             when (val packet = pbeIter.next()) {
                 is PGPPublicKeyEncryptedData -> {
-                    val ring = secretRing ?: continue
-                    val secretKey = ring.getSecretKey(packet.keyID) ?: continue
                     try {
+                        if (cachedSession != null) {
+                            CryptoProgress.stage(CryptoStage.DECRYPT_PAYLOAD)
+                            val skFactory = BcSessionKeyDataDecryptorFactory(cachedSession)
+                            PgpAlgorithmPolicy.requireAllowedSymmetric(cachedSession.algorithm)
+                            val clearStream = packet.getDataStream(skFactory)
+                            integritySource = packet
+                            clearFactory = PGPObjectFactory(clearStream, PgpFingerprints.calculator)
+                            sessionKeyOut = keyIdMarker(packet.keyID)
+                            decryptedSessionKeyOut = encodeSessionKey(cachedSession)
+                            break
+                        }
+                        val ring = secretRing ?: continue
+                        val secretKey = ring.getSecretKey(packet.keyID) ?: continue
                         CryptoProgress.stage(CryptoStage.UNLOCK_SECRET)
-                        val clearStream = if (
+                        val (clearStream, factory) = if (
                             secretKey.isPrivateKeyEmpty ||
                             request.smartCard?.ownsKey(packet.keyID) == true
                         ) {
                             val card = request.smartCard
                                 ?: throw PgpException("Secret key is on smart card but no card session")
-                            val factory = SmartCardPublicKeyDataDecryptorFactory(card, packet.keyID)
-                            PgpAlgorithmPolicy.requireAllowedSymmetric(packet.getSymmetricAlgorithm(factory))
-                            packet.getDataStream(factory)
+                            val skFactory = SmartCardPublicKeyDataDecryptorFactory(card, packet.keyID)
+                            PgpAlgorithmPolicy.requireAllowedSymmetric(packet.getSymmetricAlgorithm(skFactory))
+                            packet.getDataStream(skFactory) to skFactory
                         } else {
                             val privateKey = PgpOperators.extractPrivateKey(secretKey, request.passphrase)
                             CryptoProgress.stage(CryptoStage.DECRYPT_PAYLOAD)
-                            decryptPkStream(packet, privateKey)
+                            decryptPkStreamWithFactory(packet, privateKey)
                         }
                         CryptoProgress.stage(CryptoStage.DECRYPT_PAYLOAD)
                         integritySource = packet
                         clearFactory = PGPObjectFactory(clearStream, PgpFingerprints.calculator)
+                        runCatching {
+                            val sk = packet.getSessionKey(factory)
+                            sessionKeyOut = keyIdMarker(packet.keyID)
+                            decryptedSessionKeyOut = encodeSessionKey(sk)
+                        }
                         break
                     } catch (e: Exception) {
                         if (e is PgpException && e.securityProblem == SecurityProblem.INSECURE_ALGORITHM) {
@@ -127,6 +166,7 @@ class PgpDecryptor {
                     }
                 }
                 is PGPPBEEncryptedData -> {
+                    if (cachedSession != null) continue
                     try {
                         CryptoProgress.stage(CryptoStage.UNLOCK_SECRET)
                         val factory = BcPBEDataDecryptorFactory(
@@ -164,7 +204,10 @@ class PgpDecryptor {
 
         CryptoProgress.stage(CryptoStage.VERIFY_MDC)
         verifyIntegrity(enc)
-        return result
+        return result.copy(
+            sessionKey = sessionKeyOut,
+            decryptedSessionKey = decryptedSessionKeyOut,
+        )
     }
 
     private fun verifyIntegrity(enc: org.bouncycastle.openpgp.PGPEncryptedData) {
@@ -212,6 +255,8 @@ class PgpDecryptor {
             plaintext = plaintext,
             fileName = literal.fileName,
             verified = true,
+            modificationTimeMs = literal.modificationTime?.time ?: 0L,
+            mimeType = mimeTypeForLiteral(literal),
         )
     }
 
@@ -274,8 +319,17 @@ class PgpDecryptor {
             verified = true,
             signatureValid = signatureValid,
             signerKeyId = ops.keyID,
+            modificationTimeMs = literal.modificationTime?.time ?: 0L,
+            mimeType = mimeTypeForLiteral(literal),
+            signatureTimestampMs = sig.creationTime?.time,
         )
     }
+
+    private fun mimeTypeForLiteral(literal: PGPLiteralData): String =
+        when (literal.format) {
+            PGPLiteralData.TEXT.code, PGPLiteralData.UTF8.code -> "text/plain"
+            else -> "application/octet-stream"
+        }
 
     private fun buildSignerKeyLookup(
         request: DecryptRequest,
@@ -307,10 +361,17 @@ class PgpDecryptor {
             null
         }
 
-    private fun decryptPkStream(pbe: PGPPublicKeyEncryptedData, privateKey: PGPPrivateKey): InputStream {
-        fun open(factory: org.bouncycastle.openpgp.operator.PublicKeyDataDecryptorFactory): InputStream {
+    private fun decryptPkStream(pbe: PGPPublicKeyEncryptedData, privateKey: PGPPrivateKey): InputStream =
+        decryptPkStreamWithFactory(pbe, privateKey).first
+
+    private fun decryptPkStreamWithFactory(
+        pbe: PGPPublicKeyEncryptedData,
+        privateKey: PGPPrivateKey,
+    ): Pair<InputStream, org.bouncycastle.openpgp.operator.PublicKeyDataDecryptorFactory> {
+        fun open(factory: org.bouncycastle.openpgp.operator.PublicKeyDataDecryptorFactory):
+            Pair<InputStream, org.bouncycastle.openpgp.operator.PublicKeyDataDecryptorFactory> {
             PgpAlgorithmPolicy.requireAllowedSymmetric(pbe.getSymmetricAlgorithm(factory))
-            return pbe.getDataStream(factory)
+            return pbe.getDataStream(factory) to factory
         }
         return try {
             open(BcPublicKeyDataDecryptorFactory(privateKey))
@@ -329,5 +390,18 @@ class PgpDecryptor {
             val msg = error?.message.orEmpty()
             return msg.ifBlank { "No matching secret key or wrong passphrase for ciphertext" }
         }
+
+        internal fun encodeSessionKey(sessionKey: PGPSessionKey): ByteArray =
+            byteArrayOf(sessionKey.algorithm.toByte()) + sessionKey.key
+
+        internal fun parseCachedSessionKey(encoded: ByteArray?): PGPSessionKey? {
+            if (encoded == null || encoded.size < 2) return null
+            val algo = encoded[0].toInt() and 0xff
+            val key = encoded.copyOfRange(1, encoded.size)
+            return PGPSessionKey(algo, key)
+        }
+
+        internal fun keyIdMarker(keyId: Long): ByteArray =
+            ByteBuffer.allocate(8).putLong(keyId).array()
     }
 }

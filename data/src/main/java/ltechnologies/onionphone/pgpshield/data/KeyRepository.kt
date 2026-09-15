@@ -29,6 +29,8 @@ data class KeySummary(
     val subkeyCount: Int = 1,
     val trustLevel: Int = 0,
     val hardwareManagedPassphrase: Boolean = false,
+    /** Cached: primary expired or no remaining non-revoked encryption-capable subkey. */
+    val isExpired: Boolean = false,
 ) {
     companion object {
         const val TRUST_UNKNOWN = 0
@@ -37,6 +39,10 @@ data class KeySummary(
         /** Local owner marked this key as never trusted — refuse encrypt-to. */
         const val TRUST_NEVER = 3
     }
+
+    /** Candidate for encrypt recipient pickers (UI); engine still re-validates. */
+    fun isEncryptPickerCandidate(): Boolean =
+        !isRevoked && trustLevel != TRUST_NEVER && !isExpired
 }
 
 /**
@@ -152,4 +158,9 @@ interface KeyRepository {
      * @return Count of keys removed.
      */
     suspend fun purgeMissingBlobKeys(): Int
+
+    /**
+     * Recomputes cached expiry flags for every stored ring (post-migration / clock drift).
+     */
+    suspend fun refreshExpiryMetadata()
 }

@@ -6,7 +6,7 @@ import androidx.room.RoomDatabase
 /**
  * Room database for PGP Shield: key metadata, API permissions, overlay settings, and templates.
  *
- * Schema version 7; armored key bytes are stored outside Room in [KeyBlobStore].
+ * Schema version 8; armored key bytes are stored outside Room in [KeyBlobStore].
  */
 @Database(
     entities = [
@@ -17,7 +17,7 @@ import androidx.room.RoomDatabase
         OverlayAppConfigEntity::class,
         PaddingTemplateEntity::class,
     ],
-    version = 7,
+    version = 8,
     exportSchema = true,
 )
 abstract class AppDatabase : RoomDatabase() {

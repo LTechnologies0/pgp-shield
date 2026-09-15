@@ -10,6 +10,8 @@ import java.io.ByteArrayInputStream
 import java.io.InputStream
 import org.bouncycastle.openpgp.PGPEncryptedDataList
 import org.bouncycastle.openpgp.PGPObjectFactory
+import org.bouncycastle.openpgp.PGPPBEEncryptedData
+import org.bouncycastle.openpgp.PGPPublicKeyEncryptedData
 import org.bouncycastle.openpgp.PGPUtil
 import org.bouncycastle.openpgp.operator.KeyFingerPrintCalculator
 
@@ -38,4 +40,31 @@ object PgpStreams {
         }
         throw PgpException("No encrypted data in message")
     }
+
+    /**
+     * Lists PKESK recipient key ids and whether a SKESK (passphrase) packet is present.
+     * Used by the OpenPGP API to skip passphrase UI when no local secret matches.
+     */
+    fun inspectEncryptedRecipients(
+        data: ByteArray,
+        fingerprintCalculator: KeyFingerPrintCalculator = PgpFingerprints.calculator,
+    ): EncryptedRecipientInfo {
+        val list = readEncryptedList(data, fingerprintCalculator)
+        val pkeskIds = ArrayList<Long>()
+        var hasPbe = false
+        val iter = list.encryptedDataObjects
+        while (iter.hasNext()) {
+            when (val packet = iter.next()) {
+                is PGPPublicKeyEncryptedData -> pkeskIds.add(packet.keyID)
+                is PGPPBEEncryptedData -> hasPbe = true
+            }
+        }
+        return EncryptedRecipientInfo(pkeskKeyIds = pkeskIds, hasPassphraseSession = hasPbe)
+    }
 }
+
+/** PKESK / SKESK summary for decrypt preflight. */
+data class EncryptedRecipientInfo(
+    val pkeskKeyIds: List<Long>,
+    val hasPassphraseSession: Boolean,
+)

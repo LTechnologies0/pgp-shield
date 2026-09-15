@@ -37,6 +37,7 @@ import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import ltechnologies.onionphone.pgpshield.R
+import ltechnologies.onionphone.pgpshield.data.KeySummary
 import ltechnologies.onionphone.pgpshield.overlay.ShieldAccessibilityService
 import ltechnologies.onionphone.pgpshield.ui.components.AdaptiveScreenColumn
 import ltechnologies.onionphone.pgpshield.ui.components.KeySelectDropdown
@@ -44,6 +45,7 @@ import ltechnologies.onionphone.pgpshield.ui.components.ScreenScaffold
 import ltechnologies.onionphone.pgpshield.ui.components.SectionHeader
 import ltechnologies.onionphone.pgpshield.ui.components.SettingSwitchRow
 import ltechnologies.onionphone.pgpshield.ui.components.StringSelectDropdown
+import ltechnologies.onionphone.pgpshield.ui.components.formatKeyId
 import ltechnologies.onionphone.pgpshield.ui.overlay.OverlayConfigSection
 import ltechnologies.onionphone.pgpshield.ui.overlay.OverlayConfigViewModel
 import ltechnologies.onionphone.pgpshield.util.AccessibilityHelper
@@ -134,6 +136,7 @@ fun SettingsScreen(
                             onSelect = viewModel::setDefaultEncryptKey,
                             allowAuto = true,
                             emptyLabel = stringResource(R.string.settings_auto_first_available),
+                            keyFilter = { it.isEncryptPickerCandidate() },
                             modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp),
                         )
                         KeySelectDropdown(
@@ -193,9 +196,9 @@ fun SettingsScreen(
                             onChecked = viewModel::setAutocrypt,
                         )
                         val interopOptions = listOf(
-                            "RFC9580_MODERN" to "Modern RFC 9580 (SEIPDv2)",
-                            "LIBREPGP_GNUPG" to "GnuPG LibrePGP (v5 AEAD)",
-                            "LEGACY_MDC" to "Legacy MDC",
+                            "RFC9580_MODERN" to stringResource(R.string.settings_interop_rfc9580),
+                            "LIBREPGP_GNUPG" to stringResource(R.string.settings_interop_librepgp),
+                            "LEGACY_MDC" to stringResource(R.string.settings_interop_legacy_mdc),
                         )
                         val interopLabel = interopOptions.find { it.first == state.settings.interopProfile }?.second
                             ?: interopOptions.first().second
@@ -284,6 +287,19 @@ fun SettingsScreen(
                                         Text(
                                             stringResource(R.string.settings_granted_fmt, java.text.DateFormat.getDateTimeInstance().format(app.grantedAt)),
                                             style = MaterialTheme.typography.labelSmall,
+                                        )
+                                        val allowed = state.apiAllowedKeysByApp[app.packageName].orEmpty()
+                                        Text(
+                                            if (allowed.isEmpty()) {
+                                                stringResource(R.string.settings_api_allowed_keys_all)
+                                            } else {
+                                                stringResource(
+                                                    R.string.settings_api_allowed_keys_fmt,
+                                                    allowed.joinToString(", ") { formatKeyId(it) },
+                                                )
+                                            },
+                                            style = MaterialTheme.typography.labelSmall,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant,
                                         )
                                     }
                                     OutlinedButton(onClick = { viewModel.revokeApiApp(app.packageName) }) {

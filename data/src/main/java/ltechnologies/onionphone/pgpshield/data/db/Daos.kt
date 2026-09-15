@@ -102,6 +102,10 @@ interface ApiAllowedKeyDao {
     @Query("SELECT keyId FROM api_allowed_keys WHERE packageName = :packageName")
     suspend fun allowedKeyIds(packageName: String): List<Long>
 
+    /** Observes all per-app allowed key rows (Settings audit). */
+    @Query("SELECT * FROM api_allowed_keys")
+    fun observeAll(): Flow<List<ApiAllowedKeyEntity>>
+
     /** Adds an allowed key for an app. */
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insert(entity: ApiAllowedKeyEntity)

@@ -112,16 +112,16 @@ fun QrKeyScreen(
         scope.launch {
             val text = withContext(Dispatchers.Default) { decodeQrFromUri(context, uri) }
             if (text == null) {
-                status = "No QR code found in image"
+                status = context.getString(R.string.qr_status_no_code)
                 return@launch
             }
             if (ArmoredKeyDetector.isSecretBlock(text) == null) {
-                status = "QR payload is not an armored OpenPGP key"
+                status = context.getString(R.string.qr_status_not_armored)
                 return@launch
             }
             val secret = ArmoredKeyDetector.isSecretBlock(text) == true
             listViewModel.importArmored(text, secret) {
-                status = "Key imported from QR"
+                status = context.getString(R.string.qr_status_imported)
             }
         }
     }
@@ -177,16 +177,16 @@ fun QrKeyScreen(
                             val id = selectedKeyId ?: return@launch
                             val armored = qrViewModel.loadPublicArmored(id)
                             if (armored == null) {
-                                status = "Could not load public key"
+                                status = context.getString(R.string.qr_status_load_failed)
                                 return@launch
                             }
                             val bmp = withContext(Dispatchers.Default) { encodeQr(armored) }
                             if (bmp == null) {
                                 qrBitmap = null
-                                status = "Public key is too large for a single QR code"
+                                status = context.getString(R.string.qr_status_too_large)
                             } else {
                                 qrBitmap = bmp
-                                status = "QR generated"
+                                status = context.getString(R.string.qr_status_generated)
                             }
                         }
                     },

@@ -1,10 +1,13 @@
 package ltechnologies.onionphone.pgpshield.security
 
+import android.content.Context
 import androidx.fragment.app.FragmentActivity
+import dagger.hilt.android.qualifiers.ApplicationContext
 import javax.inject.Inject
 import javax.inject.Singleton
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import ltechnologies.onionphone.pgpshield.R
 import ltechnologies.onionphone.pgpshield.data.security.HardwarePassphraseVault
 import ltechnologies.onionphone.pgpshield.data.security.PassphraseWrappingKeyInfo
 import ltechnologies.onionphone.pgpshield.data.security.SensitiveMemory
@@ -14,6 +17,7 @@ import ltechnologies.onionphone.pgpshield.data.security.SensitiveMemory
  */
 @Singleton
 class HardwarePassphraseGate @Inject constructor(
+    @ApplicationContext private val context: Context,
     private val vault: HardwarePassphraseVault,
     private val authenticator: HardwarePassphraseAuthenticator,
 ) {
@@ -36,17 +40,17 @@ class HardwarePassphraseGate @Inject constructor(
         val unlocked = authenticator.authenticateCipher(
             activity,
             cipher,
-            title = "Protéger la passphrase",
-            subtitle = "PIN ou biométrie pour sceller la passphrase dans StrongBox/TEE",
+            title = context.getString(R.string.hw_pass_seal_title),
+            subtitle = context.getString(R.string.hw_pass_seal_subtitle),
         )
         return withContext(Dispatchers.IO) {
             vault.sealPassphrase(keyId, passphrase, unlocked)
             val info = vault.ensureWrappingKey()
             require(info.insideSecureHardware) {
-                "La clé de wrapping n'est pas dans l'enclave sécurisée"
+                context.getString(R.string.hw_pass_wrapping_not_enclave)
             }
             require(info.userAuthenticationRequired) {
-                "La clé de wrapping doit exiger l'authentification utilisateur"
+                context.getString(R.string.hw_pass_wrapping_needs_auth)
             }
             info
         }
@@ -64,8 +68,8 @@ class HardwarePassphraseGate @Inject constructor(
         val unlocked = authenticator.authenticateCipher(
             activity,
             cipher,
-            title = "Déverrouiller la clé privée",
-            subtitle = "PIN ou biométrie — la passphrase ne quitte pas l'enclave sans auth",
+            title = context.getString(R.string.hw_pass_unlock_title),
+            subtitle = context.getString(R.string.hw_pass_unlock_subtitle),
         )
         return withContext(Dispatchers.IO) {
             vault.unlockPassphrase(keyId, unlocked)

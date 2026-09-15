@@ -5,9 +5,12 @@ package ltechnologies.onionphone.pgpshield.ui.settings
  * options and granted API applications.
  */
 
+import android.content.Context
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import dagger.hilt.android.lifecycle.HiltViewModel
+import dagger.hilt.android.qualifiers.ApplicationContext
+import ltechnologies.onionphone.pgpshield.R
 import ltechnologies.onionphone.pgpshield.data.AppSettings
 import ltechnologies.onionphone.pgpshield.data.KeyRepository
 import ltechnologies.onionphone.pgpshield.data.KeySummary
@@ -34,6 +37,8 @@ data class SettingsUiState(
     val settings: AppSettings = AppSettings(),
     val keys: List<KeySummary> = emptyList(),
     val apiApps: List<ApiAppEntity> = emptyList(),
+    /** Per-package restricted key ids; empty list means all secret keys are allowed. */
+    val apiAllowedKeysByApp: Map<String, List<Long>> = emptyMap(),
     val status: String? = null,
     val accessibilityEnabled: Boolean = false,
     val isBusy: Boolean = false,
@@ -45,6 +50,7 @@ data class SettingsUiState(
  */
 @HiltViewModel
 class SettingsViewModel @Inject constructor(
+    @ApplicationContext private val context: Context,
     private val keyRepository: KeyRepository,
     private val settingsRepository: SettingsRepository,
     private val apiAppDao: ApiAppDao,
@@ -59,7 +65,10 @@ class SettingsViewModel @Inject constructor(
             settingsRepository.settings,
             keyRepository.observeKeys(),
             apiAppDao.observeAll(),
-        ) { settings, keys, apiApps -> Triple(settings, keys, apiApps) },
+            apiAllowedKeyDao.observeAll(),
+        ) { settings, keys, apiApps, allowedRows ->
+            Quadruple(settings, keys, apiApps, allowedRows)
+        },
         combine(_accessibilityEnabled, _status, _isBusy) { acs, status, busy ->
             Triple(acs, status, busy)
         },
@@ -68,11 +77,21 @@ class SettingsViewModel @Inject constructor(
             settings = meta.first,
             keys = meta.second,
             apiApps = meta.third,
+            apiAllowedKeysByApp = meta.fourth
+                .groupBy { it.packageName }
+                .mapValues { (_, rows) -> rows.map { it.keyId }.distinct().sorted() },
             accessibilityEnabled = flags.first,
             status = flags.second,
             isBusy = flags.third,
         )
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), SettingsUiState())
+
+    private data class Quadruple<A, B, C, D>(
+        val first: A,
+        val second: B,
+        val third: C,
+        val fourth: D,
+    )
 
     /** Updates the cached accessibility-service enabled flag. */
     fun refreshAccessibility(enabled: Boolean) {
@@ -146,11 +165,11 @@ class SettingsViewModel @Inject constructor(
             try {
                 val settings = settingsRepository.current()
                 if (!settings.keyserverLookupEnabled) {
-                    _status.value = "Keyserver lookup is disabled in Settings"
+                    _status.value = context.getString(R.string.settings_keyserver_disabled)
                     return@launch
                 }
                 val url = settings.keyserverUrl
-                _status.value = "Refreshing keys from keyserver…"
+                _status.value = context.getString(R.string.settings_keyserver_refreshing)
                 val keys = keyRepository.observeKeys().first()
                 val ok = withContext(Dispatchers.IO) {
                     coroutineScope {
@@ -170,9 +189,9 @@ class SettingsViewModel @Inject constructor(
                         }.sumOf { it.await() }
                     }
                 }
-                _status.value = "Refreshed $ok of ${keys.size} keys from keyserver"
+                _status.value = context.getString(R.string.settings_keyserver_refreshed_fmt, ok, keys.size)
             } catch (e: Exception) {
-                _status.value = e.message ?: "Refresh failed"
+                _status.value = e.message ?: context.getString(R.string.settings_keyserver_refresh_failed)
             } finally {
                 _isBusy.value = false
             }
@@ -184,7 +203,7 @@ class SettingsViewModel @Inject constructor(
         viewModelScope.launch(Dispatchers.IO) {
             apiAllowedKeyDao.clearForApp(packageName)
             apiAppDao.revoke(packageName)
-            _status.value = "Revoked API access for $packageName"
+            _status.value = context.getString(R.string.settings_api_revoked_fmt, packageName)
         }
     }
 

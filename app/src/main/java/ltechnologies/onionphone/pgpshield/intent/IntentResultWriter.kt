@@ -5,8 +5,10 @@ package ltechnologies.onionphone.pgpshield.intent
  */
 
 import android.app.Activity
+import android.content.Context
 import android.content.Intent
 import java.io.File
+import ltechnologies.onionphone.pgpshield.R
 
 /** Helper for naming, writing and finalizing Intent-based crypto results. */
 object IntentResultWriter {
@@ -29,6 +31,7 @@ object IntentResultWriter {
      * source file, optionally deleting the plaintext source, and returns the file.
      */
     fun writeEncryptedForCaller(
+        context: Context,
         intent: Intent,
         sourcePath: String,
         ciphertext: ByteArray,
@@ -36,7 +39,7 @@ object IntentResultWriter {
         val source = File(sourcePath)
         val outDir = intent.getStringExtra(PgpIntentActions.EXTRA_OUTPUT_PATH)?.let(::File)
             ?: source.parentFile
-            ?: error("No output directory")
+            ?: error(context.getString(R.string.intent_no_output_directory))
         val outFile = File(outDir, gpgOutputName(source.name))
         outFile.writeBytes(ciphertext)
         if (intent.getBooleanExtra(PgpIntentActions.EXTRA_DELETE_SOURCE, false)) {
@@ -50,6 +53,7 @@ object IntentResultWriter {
      * encrypted source, and returns the written file.
      */
     fun writeDecryptedForCaller(
+        context: Context,
         intent: Intent,
         sourcePath: String,
         plaintext: ByteArray,
@@ -57,7 +61,7 @@ object IntentResultWriter {
         val source = File(sourcePath)
         val outDir = intent.getStringExtra(PgpIntentActions.EXTRA_OUTPUT_PATH)?.let(::File)
             ?: source.parentFile
-            ?: error("No output directory")
+            ?: error(context.getString(R.string.intent_no_output_directory))
         val outFile = File(outDir, decryptedOutputName(source.name))
         outFile.writeBytes(plaintext)
         if (intent.getBooleanExtra(PgpIntentActions.EXTRA_DELETE_SOURCE, false)) {

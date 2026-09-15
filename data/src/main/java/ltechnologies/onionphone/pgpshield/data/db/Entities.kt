@@ -43,6 +43,8 @@ data class KeyRingEntity(
     /** 0=unknown, 1=marginal, 2=full, 3=never */
     val trustLevel: Int = 0,
     val hardwareManagedPassphrase: Boolean = false,
+    /** True when the ring is past usable encrypt expiry (see PgpAlgorithmPolicy.isKeyRingExpired). */
+    val isExpired: Boolean = false,
 )
 
 /**

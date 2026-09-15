@@ -18,6 +18,7 @@ import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.Text
 import androidx.compose.material3.adaptive.navigationsuite.NavigationSuiteScaffold
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -90,7 +91,10 @@ private fun mainTabLabel(tab: MainTab): String = when (tab) {
  * nested (non-root) destinations.
  */
 @Composable
-fun PgpShieldNavHost() {
+fun PgpShieldNavHost(
+    viewKeyId: Long? = null,
+    onViewKeyConsumed: () -> Unit = {},
+) {
     var mainTab by rememberSaveable { mutableStateOf(MainTab.Keys) }
     val snackbarHostState = LocalSnackbarHostState.current
     val keysNav = rememberNavController()
@@ -103,6 +107,15 @@ fun PgpShieldNavHost() {
         MainTab.Keys -> keysRoute == Routes.HOME
         MainTab.Crypto -> true
         MainTab.Settings -> settingsRoute == Routes.SETTINGS
+    }
+
+    LaunchedEffect(viewKeyId) {
+        val id = viewKeyId ?: return@LaunchedEffect
+        mainTab = MainTab.Keys
+        keysNav.navigate(Routes.keyDetail(id)) {
+            launchSingleTop = true
+        }
+        onViewKeyConsumed()
     }
 
     val tabContent: @Composable (Modifier) -> Unit = { modifier ->

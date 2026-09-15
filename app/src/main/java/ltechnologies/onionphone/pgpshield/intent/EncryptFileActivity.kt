@@ -124,14 +124,15 @@ class EncryptFileActivity : LockedIntentActivity() {
 
     private suspend fun encryptAndDeliver(fileName: String) {
         val bytes = IntentIoHelper.readBytes(intent, this)
-            ?: error("Could not read file from intent")
-        val public = IntentIoHelper.loadEncryptPublicKey(keyRepository, settingsRepository)
+            ?: error(getString(R.string.intent_could_not_read_file))
+        val public = IntentIoHelper.loadEncryptPublicKey(this, keyRepository, settingsRepository, intent)
+        val asciiArmor = IntentIoHelper.readOkcAsciiArmor(intent, default = false)
         val encrypted = withContext(Dispatchers.Default) {
-            cryptoOperations.encrypt(bytes, listOf(public), asciiArmor = false)
+            cryptoOperations.encrypt(bytes, listOf(public), asciiArmor = asciiArmor, allowMdcDegrade = true)
         }
         val sourcePaths = intent.getStringArrayListExtra(PgpIntentActions.EXTRA_SOURCE_PATHS)
         if (!sourcePaths.isNullOrEmpty()) {
-            val outFile = IntentResultWriter.writeEncryptedForCaller(intent, sourcePaths.first(), encrypted.ciphertext)
+            val outFile = IntentResultWriter.writeEncryptedForCaller(this, intent, sourcePaths.first(), encrypted.ciphertext)
             IntentResultWriter.finishOk(this)
             return
         }

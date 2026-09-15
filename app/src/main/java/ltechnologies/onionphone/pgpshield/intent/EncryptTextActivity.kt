@@ -87,10 +87,20 @@ class EncryptTextActivity : LockedIntentActivity() {
                                 scope.launch {
                                     try {
                                         val public = withContext(Dispatchers.IO) {
-                                            IntentIoHelper.loadEncryptPublicKey(keyRepository, settingsRepository)
+                                            IntentIoHelper.loadEncryptPublicKey(
+                                                this@EncryptTextActivity,
+                                                keyRepository,
+                                                settingsRepository,
+                                                intent,
+                                            )
                                         }
                                         val result = withContext(Dispatchers.Default) {
-                                            cryptoOperations.encrypt(plaintext.toByteArray(Charsets.UTF_8), listOf(public))
+                                            cryptoOperations.encrypt(
+                                                plaintext.toByteArray(Charsets.UTF_8),
+                                                listOf(public),
+                                                asciiArmor = IntentIoHelper.readOkcAsciiArmor(intent, default = true),
+                                                allowMdcDegrade = true,
+                                            )
                                         }
                                         output = String(result.ciphertext, Charsets.UTF_8)
                                     } catch (e: Exception) {

@@ -13,6 +13,7 @@ import android.content.Intent
 import android.os.Binder
 import android.os.IBinder
 import dagger.hilt.android.AndroidEntryPoint
+import ltechnologies.onionphone.pgpshield.R
 import ltechnologies.onionphone.pgpshield.api.CallerIdentity
 import ltechnologies.onionphone.pgpshield.api.CryptoResultParcel
 import ltechnologies.onionphone.pgpshield.api.DecryptRequestParcel
@@ -57,7 +58,7 @@ class PgpShieldService : Service() {
 
     private fun requireVaultUnlocked() {
         if (appLockManager.state.value == AppLockState.LOCKED) {
-            error("PGP Shield is locked — open the app and authenticate first")
+            error(getString(R.string.api_err_locked))
         }
     }
     private val binder = object : IPgpShieldService.Stub() {
@@ -80,22 +81,22 @@ class PgpShieldService : Service() {
                         async(Dispatchers.IO) {
                             ensureKeyAllowed(pkg, id)
                             if (!keyRepository.isEncryptRecipientAllowed(id)) {
-                                throw SecurityException("Recipient key is Never-trusted or revoked")
+                                throw SecurityException(getString(R.string.svc_err_recipient_blocked))
                             }
                             keyRepository.getArmoredPublic(id)
                         }
                     }.mapNotNull { it.await() }
                 }
                 if (publicKeys.isEmpty()) {
-                    return@runBlocking CryptoResultParcel(false, errorMessage = "No recipient keys")
+                    return@runBlocking CryptoResultParcel(false, errorMessage = getString(R.string.svc_err_no_recipients))
                 }
-                val result = cryptoOperations.encrypt(request.plaintext, publicKeys, request.asciiArmor)
+                val result = cryptoOperations.encrypt(request.plaintext, publicKeys, request.asciiArmor, allowMdcDegrade = true)
                 CryptoResultParcel(true, output = result.ciphertext)
             } catch (e: SecurityException) {
-                CryptoResultParcel(false, errorMessage = "Permission denied")
+                CryptoResultParcel(false, errorMessage = getString(R.string.svc_err_permission_denied))
             } catch (e: Exception) {
                 Timber.e(e, "encrypt failed")
-                CryptoResultParcel(false, errorMessage = CryptoErrors.safeMessage(e, "Encryption failed"))
+                CryptoResultParcel(false, errorMessage = CryptoErrors.safeMessage(e, getString(R.string.api_err_encryption_failed)))
             }
         }
 
@@ -109,7 +110,7 @@ class PgpShieldService : Service() {
                 val secret = keyRepository.getArmoredSecret(request.decryptKeyId)
                     ?: return@runBlocking CryptoResultParcel(
                         false,
-                        errorMessage = "Secret key not found",
+                        errorMessage = getString(R.string.svc_err_secret_not_found),
                         requiresUserInteraction = true,
                     )
                 val cardOk = cryptoOperations.smartCardPort.isAvailable() &&
@@ -120,17 +121,17 @@ class PgpShieldService : Service() {
                     } else {
                         return@runBlocking CryptoResultParcel(
                             false,
-                            errorMessage = "Passphrase required",
+                            errorMessage = getString(R.string.svc_err_passphrase_required),
                             requiresUserInteraction = true,
                         )
                     }
                 val result = cryptoOperations.decrypt(request.ciphertext, secret, passphrase)
                 CryptoResultParcel(true, output = result.plaintext)
             } catch (e: SecurityException) {
-                CryptoResultParcel(false, errorMessage = "Permission denied")
+                CryptoResultParcel(false, errorMessage = getString(R.string.svc_err_permission_denied))
             } catch (e: Exception) {
                 Timber.e(e, "decrypt failed")
-                CryptoResultParcel(false, errorMessage = CryptoErrors.safeMessage(e, "Decryption failed"))
+                CryptoResultParcel(false, errorMessage = CryptoErrors.safeMessage(e, getString(R.string.api_err_decryption_failed)))
             } finally {
                 passphrase?.fill('\u0000')
             }
@@ -144,7 +145,7 @@ class PgpShieldService : Service() {
                 ensureKeyAllowed(pkg, request.signKeyId)
                 requireVaultUnlocked()
                 val secret = keyRepository.getArmoredSecret(request.signKeyId)
-                    ?: return@runBlocking CryptoResultParcel(false, errorMessage = "Secret key not found")
+                    ?: return@runBlocking CryptoResultParcel(false, errorMessage = getString(R.string.svc_err_secret_not_found))
                 val cardOk = cryptoOperations.smartCardPort.isAvailable() &&
                     cryptoOperations.smartCardPort.ownsKey(request.signKeyId)
                 passphrase = request.passphrase?.copyOf()
@@ -153,17 +154,17 @@ class PgpShieldService : Service() {
                     } else {
                         return@runBlocking CryptoResultParcel(
                             false,
-                            errorMessage = "Passphrase required",
+                            errorMessage = getString(R.string.svc_err_passphrase_required),
                             requiresUserInteraction = true,
                         )
                     }
                 val result = cryptoOperations.sign(request.data, secret, passphrase)
                 CryptoResultParcel(true, output = result.output)
             } catch (e: SecurityException) {
-                CryptoResultParcel(false, errorMessage = "Permission denied")
+                CryptoResultParcel(false, errorMessage = getString(R.string.svc_err_permission_denied))
             } catch (e: Exception) {
                 Timber.e(e, "sign failed")
-                CryptoResultParcel(false, errorMessage = CryptoErrors.safeMessage(e, "Signing failed"))
+                CryptoResultParcel(false, errorMessage = CryptoErrors.safeMessage(e, getString(R.string.api_err_signing_failed)))
             } finally {
                 passphrase?.fill('\u0000')
             }
@@ -187,13 +188,13 @@ class PgpShieldService : Service() {
     }
 
     private suspend fun ensureGranted(packageName: String) {
-        if (apiAppDao.get(packageName) == null) throw SecurityException("API not granted")
+        if (apiAppDao.get(packageName) == null) throw SecurityException(getString(R.string.svc_err_api_not_granted))
     }
 
     private suspend fun ensureKeyAllowed(packageName: String, keyId: Long) {
         val allowed = apiAllowedKeyDao.allowedKeyIds(packageName)
         if (allowed.isNotEmpty() && keyId !in allowed) {
-            throw SecurityException("Key not allowed for app")
+            throw SecurityException(getString(R.string.svc_err_key_not_allowed))
         }
     }
 

@@ -365,7 +365,7 @@ private fun FormatPicker(
             selected = format == CryptoFormat.OPENPGP,
             onClick = { onSelect(CryptoFormat.OPENPGP) },
             shape = SegmentedButtonDefaults.itemShape(index = 0, count = 2),
-        ) { Text("OpenPGP") }
+        ) { Text(stringResource(R.string.crypto_openpgp_mode)) }
         SegmentedButton(
             selected = format == CryptoFormat.SMIME,
             onClick = { onSelect(CryptoFormat.SMIME) },
@@ -608,7 +608,7 @@ private fun EncryptPanel(
         keys = keys,
         selectedIds = state.recipientKeyIds,
         onSelectionChange = viewModel::setRecipientKeyIds,
-        keyFilter = { !it.isRevoked && it.trustLevel != KeySummary.TRUST_NEVER },
+        keyFilter = { it.isEncryptPickerCandidate() },
         modifier = Modifier.padding(top = 8.dp),
     )
     Text(
@@ -617,9 +617,9 @@ private fun EncryptPanel(
         modifier = Modifier.padding(top = 8.dp),
     )
     listOf(
-        MessageIntegrity.SEIPD_V2_AEAD to "SEIPDv2 AEAD",
-        MessageIntegrity.LIBREPGP_V5_AEAD to "LibrePGP v5 AEAD",
-        MessageIntegrity.MDC to "MDC",
+        MessageIntegrity.SEIPD_V2_AEAD to stringResource(R.string.crypto_integrity_seipdv2),
+        MessageIntegrity.LIBREPGP_V5_AEAD to stringResource(R.string.crypto_integrity_librepgp_v5),
+        MessageIntegrity.MDC to stringResource(R.string.crypto_integrity_mdc),
     ).forEach { (value, label) ->
         Row(
             modifier = Modifier.fillMaxWidth(),
@@ -640,7 +640,7 @@ private fun EncryptPanel(
         horizontalArrangement = Arrangement.SpaceBetween,
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        Text("Compress (ZLIB)", style = MaterialTheme.typography.bodyMedium)
+        Text(stringResource(R.string.crypto_compress_zlib), style = MaterialTheme.typography.bodyMedium)
         Switch(
             checked = state.messageCompression == MessageCompression.ZLIB,
             onCheckedChange = {

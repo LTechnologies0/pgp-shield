@@ -272,7 +272,7 @@ class KeyRepositoryImpl @Inject constructor(
         val query = entity.fingerprint.replace(" ", "")
         val armored = keyserverClient.fetchKey(baseUrl, query)
         ImportGuard.checkSize(armored)
-        val info = readAndValidate(armored, secret = false, allowRevoked = true)
+        val info = readAndValidate(armored, secret = false, allowRevoked = true, allowExpired = true)
         if (entity.isSecret) {
             if (entity.publicBlobPath != null) {
                 blobStore.writePublic(entity.masterKeyId, armored)
@@ -347,13 +347,32 @@ class KeyRepositoryImpl @Inject constructor(
         return removed
     }
 
-    private fun readAndValidate(armored: ByteArray, secret: Boolean, allowRevoked: Boolean = false): KeyRingInfo {
+    /** @see KeyRepository.refreshExpiryMetadata */
+    override suspend fun refreshExpiryMetadata() {
+        for (entity in database.keyRingDao().getAll()) {
+            val armored = getArmoredPublic(entity.masterKeyId) ?: continue
+            val info = runCatching {
+                reader.readPublicKeyRing(armored.inputStream())
+            }.getOrNull() ?: continue
+            val expired = PgpAlgorithmPolicy.isKeyRingExpired(info)
+            if (expired != entity.isExpired) {
+                database.keyRingDao().insert(entity.copy(isExpired = expired))
+            }
+        }
+    }
+
+    private fun readAndValidate(
+        armored: ByteArray,
+        secret: Boolean,
+        allowRevoked: Boolean = false,
+        allowExpired: Boolean = false,
+    ): KeyRingInfo {
         val info = if (secret) {
             reader.readSecretKeyRing(armored.inputStream())
         } else {
             reader.readPublicKeyRing(armored.inputStream())
         }
-        PgpAlgorithmPolicy.validateKeyRing(info, allowRevoked)
+        PgpAlgorithmPolicy.validateKeyRing(info, allowRevoked, allowExpired)
         return info
     }
 
@@ -365,18 +384,32 @@ class KeyRepositoryImpl @Inject constructor(
         primaryAlgorithm: String,
         hardwareManagedPassphrase: Boolean = false,
     ) {
+        val existing = database.keyRingDao().getById(info.masterKeyId)
+        // REPLACE must not wipe owner trust, StrongBox flag, or original import time.
+        val mergedSecret = existing?.isSecret == true || secret
+        val mergedHw = existing?.hardwareManagedPassphrase == true || hardwareManagedPassphrase
+        val mergedCreatedAt = existing?.createdAt ?: System.currentTimeMillis()
+        val mergedTrust = existing?.trustLevel ?: 0
+        val mergedPublicPath = publicBlobPath ?: existing?.publicBlobPath
+        val mergedBlobPath = if (mergedSecret && !secret && existing != null) {
+            existing.blobPath
+        } else {
+            blobPath
+        }
         database.keyRingDao().insert(
             KeyRingEntity(
                 masterKeyId = info.masterKeyId,
                 fingerprint = info.fingerprint,
-                isSecret = secret,
+                isSecret = mergedSecret,
                 isRevoked = info.isRevoked,
-                blobPath = blobPath,
-                publicBlobPath = publicBlobPath,
-                createdAt = System.currentTimeMillis(),
+                blobPath = mergedBlobPath,
+                publicBlobPath = mergedPublicPath,
+                createdAt = mergedCreatedAt,
                 primaryAlgorithm = primaryAlgorithm,
                 subkeyCount = info.subkeys.size,
-                hardwareManagedPassphrase = hardwareManagedPassphrase,
+                trustLevel = mergedTrust,
+                hardwareManagedPassphrase = mergedHw,
+                isExpired = PgpAlgorithmPolicy.isKeyRingExpired(info),
             ),
         )
         database.userIdDao().deleteForKey(info.masterKeyId)
@@ -395,7 +428,10 @@ class KeyRepositoryImpl @Inject constructor(
         val master = info.subkeys.firstOrNull { it.keyId == info.masterKeyId }
             ?: info.subkeys.firstOrNull()
             ?: return "Unknown"
-        return AlgorithmLabels.forAlgorithm(master.algorithm)
+        return AlgorithmLabels.forAlgorithm(
+            master.algorithm,
+            master.bitStrength.takeIf { it > 0 },
+        )
     }
 
     private fun KeyRingEntity.toSummary(userIds: List<UserIdEntity>): KeySummary =
@@ -410,5 +446,6 @@ class KeyRepositoryImpl @Inject constructor(
             subkeyCount = subkeyCount,
             trustLevel = trustLevel,
             hardwareManagedPassphrase = hardwareManagedPassphrase,
+            isExpired = isExpired,
         )
 }

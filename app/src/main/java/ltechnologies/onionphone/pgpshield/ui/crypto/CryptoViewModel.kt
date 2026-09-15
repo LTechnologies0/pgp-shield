@@ -4,10 +4,13 @@ package ltechnologies.onionphone.pgpshield.ui.crypto
  * State holder and orchestration for the encrypt/decrypt/sign/verify screen.
  */
 
+import android.content.Context
 import androidx.fragment.app.FragmentActivity
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import dagger.hilt.android.lifecycle.HiltViewModel
+import dagger.hilt.android.qualifiers.ApplicationContext
+import ltechnologies.onionphone.pgpshield.R
 import ltechnologies.onionphone.pgpshield.crypto.CryptoOperations
 import ltechnologies.onionphone.pgpshield.data.AutocryptManager
 import ltechnologies.onionphone.pgpshield.data.KeyRepository
@@ -101,6 +104,7 @@ data class CryptoUiState(
  */
 @HiltViewModel
 class CryptoViewModel @Inject constructor(
+    @ApplicationContext private val context: Context,
     private val keyRepository: KeyRepository,
     private val cryptoOperations: CryptoOperations,
     private val smimeStore: SmimeCertificateStore,
@@ -148,17 +152,13 @@ class CryptoViewModel @Inject constructor(
                 val current = _uiState.value
                 val prunedRecipients = current.recipientKeyIds.filter { id ->
                     keyList.any {
-                        it.masterKeyId == id &&
-                            !it.isRevoked &&
-                            it.trustLevel != KeySummary.TRUST_NEVER
+                        it.masterKeyId == id && it.isEncryptPickerCandidate()
                     }
                 }.toSet()
                 val recipients = when {
                     prunedRecipients.isNotEmpty() -> prunedRecipients
-                    !recipientsInitialized && keyList.isNotEmpty() ->
-                        keyList.firstOrNull {
-                            !it.isRevoked && it.trustLevel != KeySummary.TRUST_NEVER
-                        }?.masterKeyId?.let { setOf(it) } ?: emptySet()
+                    // OpenKeychain-style: do not auto-pick the user's own key as encrypt recipient.
+                    !recipientsInitialized -> emptySet()
                     else -> prunedRecipients
                 }
                 recipientsInitialized = true
@@ -285,14 +285,14 @@ class CryptoViewModel @Inject constructor(
     /** Sets the selected input file, enforcing the maximum stream size. */
     fun setInputFile(name: String, bytes: ByteArray) {
         require(bytes.size <= PgpIo.MAX_STREAM_BYTES) {
-            "File too large (max ${PgpIo.MAX_STREAM_BYTES / (1024 * 1024)} MB)"
+            context.getString(R.string.crypto_file_too_large_fmt, PgpIo.MAX_STREAM_BYTES / (1024 * 1024))
         }
         _uiState.value = _uiState.value.copy(
             inputFileName = name,
             inputFileBytes = bytes,
             outputFileName = null,
             outputFileBytes = null,
-            fileStatus = "Loaded $name (${bytes.size} bytes)",
+            fileStatus = context.getString(R.string.crypto_status_loaded_fmt, name, bytes.size),
             error = null,
             isBusy = false,
             progress = null,
@@ -312,7 +312,7 @@ class CryptoViewModel @Inject constructor(
                 }
                 setInputFile(loaded.first, loaded.second)
             } catch (e: Exception) {
-                _uiState.value = _uiState.value.copy(error = e.message)
+                _uiState.value = _uiState.value.copy(error = localizeEngineError(e))
                 clearBusy()
             }
         }
@@ -322,11 +322,11 @@ class CryptoViewModel @Inject constructor(
     fun setFolderFiles(files: List<Pair<String, ByteArray>>) {
         val total = files.sumOf { it.second.size }
         require(total <= PgpIo.MAX_STREAM_BYTES) {
-            "Folder too large (max ${PgpIo.MAX_STREAM_BYTES / (1024 * 1024)} MB total)"
+            context.getString(R.string.crypto_folder_too_large_fmt, PgpIo.MAX_STREAM_BYTES / (1024 * 1024))
         }
         _uiState.value = _uiState.value.copy(
             folderFiles = files,
-            fileStatus = "${files.size} files selected ($total bytes)",
+            fileStatus = context.getString(R.string.crypto_status_files_selected_fmt, files.size, total),
             error = null,
             isBusy = false,
             progress = null,
@@ -341,7 +341,7 @@ class CryptoViewModel @Inject constructor(
             try {
                 setFolderFiles(loader())
             } catch (e: Exception) {
-                _uiState.value = _uiState.value.copy(error = e.message)
+                _uiState.value = _uiState.value.copy(error = localizeEngineError(e))
                 clearBusy()
             }
         }
@@ -350,12 +350,12 @@ class CryptoViewModel @Inject constructor(
     /** Sets the detached signature file used for verification. */
     fun setSignatureFile(name: String, bytes: ByteArray) {
         require(bytes.size <= PgpIo.MAX_STREAM_BYTES) {
-            "Signature file too large"
+            context.getString(R.string.crypto_signature_too_large)
         }
         _uiState.value = _uiState.value.copy(
             signatureFileName = name,
             signatureFileBytes = bytes,
-            fileStatus = "Signature: $name",
+            fileStatus = context.getString(R.string.crypto_status_signature_fmt, name),
             error = null,
             isBusy = false,
             progress = null,
@@ -375,7 +375,7 @@ class CryptoViewModel @Inject constructor(
                 }
                 setSignatureFile(loaded.first, loaded.second)
             } catch (e: Exception) {
-                _uiState.value = _uiState.value.copy(error = e.message)
+                _uiState.value = _uiState.value.copy(error = localizeEngineError(e))
                 clearBusy()
             }
         }
@@ -459,12 +459,12 @@ class CryptoViewModel @Inject constructor(
                 SensitiveWiper.wipe(pkcs12PasswordChars)
                 pkcs12PasswordChars = CharArray(0)
                 _uiState.value = _uiState.value.copy(
-                    fileStatus = "Imported S/MIME identity from PKCS#12",
+                    fileStatus = context.getString(R.string.crypto_status_smime_imported),
                     error = null,
                     sensitiveInputEpoch = _uiState.value.sensitiveInputEpoch + 1,
                 )
             } catch (e: Exception) {
-                _uiState.value = _uiState.value.copy(error = e.message)
+                _uiState.value = _uiState.value.copy(error = localizeEngineError(e))
             } finally {
                 SensitiveWiper.wipe(password)
                 clearBusy()
@@ -508,17 +508,17 @@ class CryptoViewModel @Inject constructor(
             markBusy()
             try {
                 require(_uiState.value.payload != CryptoPayload.FOLDER) {
-                    "S/MIME folder encrypt is not supported — use OpenPGP or a single file"
+                    context.getString(R.string.crypto_smime_folder_encrypt_unsupported)
                 }
                 val aliases = _uiState.value.smimeRecipientAliases
-                require(aliases.isNotEmpty()) { "Select at least one S/MIME recipient certificate" }
+                require(aliases.isNotEmpty()) { context.getString(R.string.crypto_smime_select_recipient) }
                 val certs = _uiState.value.smimeIdentities
                     .filter { it.alias in aliases }
                     .map { it.certificate }
-                require(certs.size == aliases.size) { "S/MIME certificate missing for a recipient" }
+                require(certs.size == aliases.size) { context.getString(R.string.crypto_smime_cert_missing) }
                 val plaintext = when (_uiState.value.payload) {
                     CryptoPayload.TEXT -> _uiState.value.plaintext.toByteArray(Charsets.UTF_8)
-                    CryptoPayload.FILE -> _uiState.value.inputFileBytes ?: error("Pick a file to encrypt")
+                    CryptoPayload.FILE -> _uiState.value.inputFileBytes ?: error(context.getString(R.string.crypto_pick_file_encrypt))
                     CryptoPayload.FOLDER -> error("unreachable")
                 }
                 val cms = withContext(Dispatchers.Default) {
@@ -534,12 +534,12 @@ class CryptoViewModel @Inject constructor(
                     _uiState.value = _uiState.value.copy(
                         outputFileBytes = cms,
                         outputFileName = name,
-                        fileStatus = "S/MIME encrypted → $name (${cms.size} bytes)",
+                        fileStatus = context.getString(R.string.crypto_status_smime_encrypted_fmt, name, cms.size),
                         error = null,
                     )
                 }
             } catch (e: Exception) {
-                _uiState.value = _uiState.value.copy(error = e.message)
+                _uiState.value = _uiState.value.copy(error = localizeEngineError(e))
             } finally {
                 clearBusy()
             }
@@ -551,26 +551,29 @@ class CryptoViewModel @Inject constructor(
             markBusy()
             try {
                 val ids = _uiState.value.recipientKeyIds
-                require(ids.isNotEmpty()) { "Select at least one recipient key" }
+                require(ids.isNotEmpty()) { context.getString(R.string.crypto_select_recipient_key) }
                 requireEncryptableRecipients(ids)
                 val publicKeys = withContext(Dispatchers.IO) {
                     loadPublicKeysParallel(ids)
                 }
-                require(publicKeys.size == ids.size) { "Public key missing for a recipient" }
+                require(publicKeys.size == ids.size) { context.getString(R.string.crypto_public_key_missing) }
+                val requested = _uiState.value.messageIntegrity
                 val result = withContext(Dispatchers.Default) {
                     cryptoOperations.encryptSuspending(
                         _uiState.value.plaintext.toByteArray(Charsets.UTF_8),
                         publicKeys,
-                        integrity = _uiState.value.messageIntegrity,
+                        integrity = requested,
                         compression = _uiState.value.messageCompression,
+                        allowMdcDegrade = requested == MessageIntegrity.SEIPD_V2_AEAD,
                     )
                 }
                 _uiState.value = _uiState.value.copy(
                     output = String(result.ciphertext, Charsets.UTF_8),
+                    fileStatus = mdcDegradeStatus(requested, result.integrity),
                     error = null,
                 )
             } catch (e: Exception) {
-                _uiState.value = _uiState.value.copy(error = e.message)
+                _uiState.value = _uiState.value.copy(error = localizeEngineError(e))
             } finally {
                 clearBusy()
             }
@@ -582,34 +585,38 @@ class CryptoViewModel @Inject constructor(
         viewModelScope.launch {
             markBusy()
             try {
-                val input = _uiState.value.inputFileBytes ?: error("Pick a file to encrypt")
+                val input = _uiState.value.inputFileBytes ?: error(context.getString(R.string.crypto_pick_file_encrypt))
                 val name = _uiState.value.inputFileName ?: "file.bin"
                 val ids = _uiState.value.recipientKeyIds
-                require(ids.isNotEmpty()) { "Select at least one recipient key" }
+                require(ids.isNotEmpty()) { context.getString(R.string.crypto_select_recipient_key) }
                 requireEncryptableRecipients(ids)
                 val publicKeys = withContext(Dispatchers.IO) {
                     loadPublicKeysParallel(ids)
                 }
-                require(publicKeys.size == ids.size) { "Public key missing for a recipient" }
+                require(publicKeys.size == ids.size) { context.getString(R.string.crypto_public_key_missing) }
+                val requested = _uiState.value.messageIntegrity
                 val result = withContext(Dispatchers.Default) {
                     cryptoOperations.encryptSuspending(
                         input,
                         publicKeys,
                         asciiArmor = false,
                         fileName = name,
-                        integrity = _uiState.value.messageIntegrity,
+                        integrity = requested,
                         compression = _uiState.value.messageCompression,
+                        allowMdcDegrade = requested == MessageIntegrity.SEIPD_V2_AEAD,
                     )
                 }
                 val outName = CryptoFileHelper.guessEncryptedName(name)
+                val base = context.getString(R.string.crypto_status_encrypted_fmt, outName, result.ciphertext.size)
+                val note = mdcDegradeStatus(requested, result.integrity)
                 _uiState.value = _uiState.value.copy(
                     outputFileBytes = result.ciphertext,
                     outputFileName = outName,
-                    fileStatus = "Encrypted → $outName (${result.ciphertext.size} bytes)",
+                    fileStatus = if (note != null) "$base · $note" else base,
                     error = null,
                 )
             } catch (e: Exception) {
-                _uiState.value = _uiState.value.copy(error = e.message)
+                _uiState.value = _uiState.value.copy(error = localizeEngineError(e))
             } finally {
                 clearBusy()
             }
@@ -622,29 +629,41 @@ class CryptoViewModel @Inject constructor(
             markBusy()
             try {
                 val files = _uiState.value.folderFiles
-                require(files.isNotEmpty()) { "Pick at least one file for the archive" }
+                require(files.isNotEmpty()) { context.getString(R.string.crypto_pick_archive_files) }
                 val ids = _uiState.value.recipientKeyIds
-                require(ids.isNotEmpty()) { "Select at least one recipient key" }
+                require(ids.isNotEmpty()) { context.getString(R.string.crypto_select_recipient_key) }
                 requireEncryptableRecipients(ids)
                 val publicKeys = withContext(Dispatchers.IO) {
                     loadPublicKeysParallel(ids)
                 }
-                require(publicKeys.size == ids.size) { "Public key missing for a recipient" }
+                require(publicKeys.size == ids.size) { context.getString(R.string.crypto_public_key_missing) }
                 val named = files.map { (name, data) ->
                     ltechnologies.onionphone.pgpshield.engine.NamedFile(name, data)
                 }
+                val requested = _uiState.value.messageIntegrity
                 val result = withContext(Dispatchers.Default) {
-                    cryptoOperations.encryptTar(named, publicKeys, asciiArmor = false)
+                    cryptoOperations.encryptTar(
+                        named,
+                        publicKeys,
+                        asciiArmor = false,
+                        allowMdcDegrade = requested == MessageIntegrity.SEIPD_V2_AEAD,
+                    )
                 }
                 val outName = "archive.gpg"
+                val base = context.getString(
+                    R.string.crypto_status_encrypted_folder_fmt,
+                    outName,
+                    result.ciphertext.size,
+                )
+                val note = mdcDegradeStatus(requested, result.integrity)
                 _uiState.value = _uiState.value.copy(
                     outputFileBytes = result.ciphertext,
                     outputFileName = outName,
-                    fileStatus = "Encrypted folder → $outName (${result.ciphertext.size} bytes)",
+                    fileStatus = if (note != null) "$base · $note" else base,
                     error = null,
                 )
             } catch (e: Exception) {
-                _uiState.value = _uiState.value.copy(error = e.message)
+                _uiState.value = _uiState.value.copy(error = localizeEngineError(e))
             } finally {
                 clearBusy()
             }
@@ -665,11 +684,11 @@ class CryptoViewModel @Inject constructor(
             var passphrase: CharArray? = null
             markBusy()
             try {
-                val keyId = _uiState.value.secretKeyId ?: error("Select your secret key")
-                val key = keys.value.find { it.masterKeyId == keyId } ?: error("Key not found")
-                if (!key.isSecret) error("Select a secret key to decrypt")
+                val keyId = _uiState.value.secretKeyId ?: error(context.getString(R.string.crypto_select_secret_key))
+                val key = keys.value.find { it.masterKeyId == keyId } ?: error(context.getString(R.string.crypto_key_not_found))
+                if (!key.isSecret) error(context.getString(R.string.crypto_select_secret_decrypt))
                 val armored = withContext(Dispatchers.IO) {
-                    keyRepository.getArmoredSecret(keyId) ?: error("Secret missing")
+                    keyRepository.getArmoredSecret(keyId) ?: error(context.getString(R.string.crypto_secret_missing))
                 }
                 passphrase = passphraseForKey(keyId)
                 val result = withContext(Dispatchers.Default) {
@@ -691,7 +710,7 @@ class CryptoViewModel @Inject constructor(
                 )
                 wipePassphraseUi()
             } catch (e: Exception) {
-                _uiState.value = _uiState.value.copy(error = e.message)
+                _uiState.value = _uiState.value.copy(error = localizeEngineError(e))
             } finally {
                 SensitiveWiper.wipe(passphrase)
                 clearBusy()
@@ -720,10 +739,10 @@ class CryptoViewModel @Inject constructor(
         viewModelScope.launch {
             markBusy()
             try {
-                val alias = _uiState.value.smimeIdentityAlias ?: error("Select an S/MIME identity with a private key")
+                val alias = _uiState.value.smimeIdentityAlias ?: error(context.getString(R.string.crypto_smime_select_identity))
                 val identity = _uiState.value.smimeIdentities.find { it.alias == alias }
-                    ?: error("S/MIME identity not found")
-                val privateKey = identity.privateKey ?: error("Selected identity has no private key")
+                    ?: error(context.getString(R.string.crypto_smime_identity_not_found))
+                val privateKey = identity.privateKey ?: error(context.getString(R.string.crypto_smime_no_private_key))
                 val ciphertext = when (_uiState.value.payload) {
                     CryptoPayload.TEXT -> {
                         val raw = _uiState.value.ciphertext.trim()
@@ -731,8 +750,8 @@ class CryptoViewModel @Inject constructor(
                             raw.toByteArray(Charsets.UTF_8)
                         }
                     }
-                    CryptoPayload.FILE -> _uiState.value.inputFileBytes ?: error("Pick a .p7m file")
-                    CryptoPayload.FOLDER -> error("S/MIME folder decrypt not supported")
+                    CryptoPayload.FILE -> _uiState.value.inputFileBytes ?: error(context.getString(R.string.crypto_pick_p7m))
+                    CryptoPayload.FOLDER -> error(context.getString(R.string.crypto_smime_folder_decrypt_unsupported))
                 }
                 val plain = withContext(Dispatchers.Default) {
                     cryptoOperations.smimeDecrypt(ciphertext, privateKey)
@@ -747,12 +766,12 @@ class CryptoViewModel @Inject constructor(
                     _uiState.value = _uiState.value.copy(
                         outputFileBytes = plain,
                         outputFileName = outName,
-                        fileStatus = "S/MIME decrypted → $outName",
+                        fileStatus = context.getString(R.string.crypto_status_smime_decrypted_fmt, outName),
                         error = null,
                     )
                 }
             } catch (e: Exception) {
-                _uiState.value = _uiState.value.copy(error = e.message)
+                _uiState.value = _uiState.value.copy(error = localizeEngineError(e))
             } finally {
                 clearBusy()
             }
@@ -766,13 +785,13 @@ class CryptoViewModel @Inject constructor(
             _uiState.value = _uiState.value.copy(outputFileBytes = null, outputFileName = null)
             markBusy()
             try {
-                val input = _uiState.value.inputFileBytes ?: error("Pick an encrypted file (.gpg)")
+                val input = _uiState.value.inputFileBytes ?: error(context.getString(R.string.crypto_pick_encrypted_gpg))
                 val name = _uiState.value.inputFileName ?: "file.gpg"
-                val keyId = _uiState.value.secretKeyId ?: error("Select your secret key")
-                val key = keys.value.find { it.masterKeyId == keyId } ?: error("Key not found")
-                if (!key.isSecret) error("Select a secret key to decrypt")
+                val keyId = _uiState.value.secretKeyId ?: error(context.getString(R.string.crypto_select_secret_key))
+                val key = keys.value.find { it.masterKeyId == keyId } ?: error(context.getString(R.string.crypto_key_not_found))
+                if (!key.isSecret) error(context.getString(R.string.crypto_select_secret_decrypt))
                 val armored = withContext(Dispatchers.IO) {
-                    keyRepository.getArmoredSecret(keyId) ?: error("Secret missing")
+                    keyRepository.getArmoredSecret(keyId) ?: error(context.getString(R.string.crypto_secret_missing))
                 }
                 passphrase = passphraseForKey(keyId)
                 val result = withContext(Dispatchers.Default) {
@@ -784,12 +803,12 @@ class CryptoViewModel @Inject constructor(
                 _uiState.value = _uiState.value.copy(
                     outputFileBytes = result.plaintext,
                     outputFileName = outName,
-                    fileStatus = "Decrypted → $outName (${result.plaintext.size} bytes)",
+                    fileStatus = context.getString(R.string.crypto_status_decrypted_fmt, outName, result.plaintext.size),
                     error = null,
                 )
                 wipePassphraseUi()
             } catch (e: Exception) {
-                _uiState.value = _uiState.value.copy(error = e.message)
+                _uiState.value = _uiState.value.copy(error = localizeEngineError(e))
             } finally {
                 SensitiveWiper.wipe(passphrase)
                 clearBusy()
@@ -807,11 +826,11 @@ class CryptoViewModel @Inject constructor(
             var passphrase: CharArray? = null
             markBusy()
             try {
-                val keyId = _uiState.value.secretKeyId ?: error("Select your secret key")
-                val key = keys.value.find { it.masterKeyId == keyId } ?: error("Key not found")
-                if (!key.isSecret) error("Select a secret key to sign")
+                val keyId = _uiState.value.secretKeyId ?: error(context.getString(R.string.crypto_select_secret_key))
+                val key = keys.value.find { it.masterKeyId == keyId } ?: error(context.getString(R.string.crypto_key_not_found))
+                if (!key.isSecret) error(context.getString(R.string.crypto_select_secret_sign))
                 val armored = withContext(Dispatchers.IO) {
-                    keyRepository.getArmoredSecret(keyId) ?: error("Secret missing")
+                    keyRepository.getArmoredSecret(keyId) ?: error(context.getString(R.string.crypto_secret_missing))
                 }
                 passphrase = passphraseForKey(keyId)
                 val result = withContext(Dispatchers.Default) {
@@ -828,7 +847,7 @@ class CryptoViewModel @Inject constructor(
                 )
                 wipePassphraseUi()
             } catch (e: Exception) {
-                _uiState.value = _uiState.value.copy(error = e.message)
+                _uiState.value = _uiState.value.copy(error = localizeEngineError(e))
             } finally {
                 SensitiveWiper.wipe(passphrase)
                 clearBusy()
@@ -843,13 +862,13 @@ class CryptoViewModel @Inject constructor(
             _uiState.value = _uiState.value.copy(outputFileBytes = null, outputFileName = null)
             markBusy()
             try {
-                val input = _uiState.value.inputFileBytes ?: error("Pick a file to sign")
+                val input = _uiState.value.inputFileBytes ?: error(context.getString(R.string.crypto_pick_file_sign))
                 val name = _uiState.value.inputFileName ?: "file.bin"
-                val keyId = _uiState.value.secretKeyId ?: error("Select your secret key")
-                val key = keys.value.find { it.masterKeyId == keyId } ?: error("Key not found")
-                if (!key.isSecret) error("Select a secret key to sign")
+                val keyId = _uiState.value.secretKeyId ?: error(context.getString(R.string.crypto_select_secret_key))
+                val key = keys.value.find { it.masterKeyId == keyId } ?: error(context.getString(R.string.crypto_key_not_found))
+                if (!key.isSecret) error(context.getString(R.string.crypto_select_secret_sign))
                 val armored = withContext(Dispatchers.IO) {
-                    keyRepository.getArmoredSecret(keyId) ?: error("Secret missing")
+                    keyRepository.getArmoredSecret(keyId) ?: error(context.getString(R.string.crypto_secret_missing))
                 }
                 passphrase = passphraseForKey(keyId)
                 val result = withContext(Dispatchers.Default) {
@@ -860,12 +879,12 @@ class CryptoViewModel @Inject constructor(
                 _uiState.value = _uiState.value.copy(
                     outputFileBytes = result.output,
                     outputFileName = outName,
-                    fileStatus = "Signed → $outName (detached)",
+                    fileStatus = context.getString(R.string.crypto_status_signed_fmt, outName),
                     error = null,
                 )
                 wipePassphraseUi()
             } catch (e: Exception) {
-                _uiState.value = _uiState.value.copy(error = e.message)
+                _uiState.value = _uiState.value.copy(error = localizeEngineError(e))
             } finally {
                 SensitiveWiper.wipe(passphrase)
                 clearBusy()
@@ -886,7 +905,7 @@ class CryptoViewModel @Inject constructor(
                 val result = verifyIncrementally(signed)
                 applyVerifyResult(result)
             } catch (e: Exception) {
-                _uiState.value = _uiState.value.copy(error = e.message)
+                _uiState.value = _uiState.value.copy(error = localizeEngineError(e))
             } finally {
                 clearBusy()
             }
@@ -898,12 +917,12 @@ class CryptoViewModel @Inject constructor(
         viewModelScope.launch {
             markBusy(clearVerify = true)
             try {
-                val data = _uiState.value.inputFileBytes ?: error("Pick the signed file")
-                val sig = _uiState.value.signatureFileBytes ?: error("Pick the .sig signature file")
+                val data = _uiState.value.inputFileBytes ?: error(context.getString(R.string.crypto_pick_signed_file))
+                val sig = _uiState.value.signatureFileBytes ?: error(context.getString(R.string.crypto_pick_sig_file))
                 val result = verifyIncrementally(sig, message = data, binaryDocument = true)
                 applyVerifyResult(result)
             } catch (e: Exception) {
-                _uiState.value = _uiState.value.copy(error = e.message)
+                _uiState.value = _uiState.value.copy(error = localizeEngineError(e))
             } finally {
                 clearBusy()
             }
@@ -929,7 +948,7 @@ class CryptoViewModel @Inject constructor(
             }
         }
         if (publics.isEmpty()) {
-            return VerifyResult(valid = false, error = "No matching public key")
+            return VerifyResult(valid = false, error = context.getString(R.string.crypto_no_matching_public_key))
         }
         return withContext(Dispatchers.Default) {
             cryptoOperations.verify(signed, publics, message = message, binaryDocument = binaryDocument)
@@ -949,13 +968,13 @@ class CryptoViewModel @Inject constructor(
                 signerLabel = label,
                 error = result.error,
             ),
-            fileStatus = if (result.valid) "Valid detached signature" else result.error,
+            fileStatus = if (result.valid) context.getString(R.string.crypto_valid_detached_signature) else result.error,
             error = null,
         )
     }
 
     private fun requirePassphrase(): CharArray {
-        require(passphraseChars.isNotEmpty()) { "Enter your key passphrase" }
+        require(passphraseChars.isNotEmpty()) { context.getString(R.string.crypto_enter_passphrase) }
         return passphraseChars.copyOf()
     }
 
@@ -968,7 +987,7 @@ class CryptoViewModel @Inject constructor(
         val summary = keys.value.find { it.masterKeyId == keyId }
         if (summary?.hardwareManagedPassphrase == true) {
             val activity = hostActivity?.get()
-                ?: error("Unlock PIN/biométrique indisponible (activity manquante)")
+                ?: error(context.getString(R.string.crypto_hw_unlock_unavailable))
             return hardwarePassphraseGate.unlockAfterAuth(activity, keyId)
         }
         val card = cryptoOperations.smartCardPort
@@ -985,13 +1004,36 @@ class CryptoViewModel @Inject constructor(
         _uiState.update { it.copy(sensitiveInputEpoch = it.sensitiveInputEpoch + 1) }
     }
 
+    /** Status note when SEIPDv2 was requested but recipients forced MDC negotiation. */
+    private fun mdcDegradeStatus(
+        requested: MessageIntegrity,
+        used: MessageIntegrity,
+    ): String? =
+        if (requested == MessageIntegrity.SEIPD_V2_AEAD && used == MessageIntegrity.MDC) {
+            context.getString(R.string.crypto_status_mdc_degraded)
+        } else {
+            null
+        }
+
+    /** Maps known engine English exceptions to localized UI strings. */
+    private fun localizeEngineError(e: Throwable): String {
+        val msg = e.message ?: return context.getString(R.string.crypto_err_generic)
+        return when {
+            msg.contains("do not advertise SEIPDv2", ignoreCase = true) ->
+                context.getString(R.string.crypto_err_recipients_no_seipdv2)
+            msg.contains("No encryption-capable recipient", ignoreCase = true) ->
+                context.getString(R.string.crypto_err_no_encrypt_recipients)
+            else -> msg
+        }
+    }
+
     /** Rejects encrypt-to recipients marked Never-trusted. */
     private fun requireEncryptableRecipients(ids: Collection<Long>) {
         val blocked = keys.value.filter {
             it.masterKeyId in ids && it.trustLevel == KeySummary.TRUST_NEVER
         }
         require(blocked.isEmpty()) {
-            "Cannot encrypt to Never-trusted key(s)"
+            context.getString(R.string.crypto_never_trusted_blocked)
         }
     }
 }
