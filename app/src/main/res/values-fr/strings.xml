@@ -545,11 +545,11 @@
     <string name="settings_keyserver_disabled">La recherche keyserver est desactivee dans les reglages</string>
     <string name="settings_keyserver_refreshing">Actualisation des cles depuis le keyserver…</string>
     <string name="settings_keyserver_refreshed_fmt">%1$d sur %2$d cles actualisees depuis le keyserver</string>
-    <string name="settings_keyserver_refresh_failed">Echec de l'actualisation</string>
+    <string name="settings_keyserver_refresh_failed">Echec de l\'actualisation</string>
     <string name="settings_api_revoked_fmt">Acces API revoque pour %1$s</string>
 
 
-    <string name="api_err_locked">PGP Shield est verrouille — ouvrez l'app et authentifiez-vous</string>
+    <string name="api_err_locked">PGP Shield est verrouille — ouvrez l\'app et authentifiez-vous</string>
     <string name="api_err_missing_api_version">Extra api_version manquant</string>
     <string name="api_err_missing_action">Action manquante</string>
     <string name="api_err_unsupported_action_fmt">Action non prise en charge : %1$s</string>
@@ -573,7 +573,7 @@
     <string name="svc_err_permission_denied">Permission refusee</string>
     <string name="svc_err_secret_not_found">Cle secrete introuvable</string>
     <string name="svc_err_passphrase_required">Passphrase requise</string>
-    <string name="svc_err_key_not_allowed">Cle non autorisee pour l'app</string>
+    <string name="svc_err_key_not_allowed">Cle non autorisee pour l\'app</string>
 
     <string name="svc_err_recipient_blocked">Cle destinataire Never-trusted ou revoquee</string>
     <string name="svc_err_api_not_granted">API non accordee</string>
@@ -584,25 +584,25 @@
     <string name="padding_template_default_content">Notes :\n</string>
     <string name="overlay_pkg_placeholder">com.telegram.messenger</string>
 
-    <string name="intent_err_no_files">Aucun fichier dans l'intent</string>
+    <string name="intent_err_no_files">Aucun fichier dans l\'intent</string>
     <string name="intent_err_no_files_encrypt">Aucun fichier a chiffrer</string>
     <string name="intent_err_read_files">Impossible de lire les fichiers</string>
     <string name="intent_err_encrypt_files">Impossible de chiffrer les fichiers</string>
-    <string name="intent_err_read_file">Impossible de lire le fichier depuis l'intent</string>
+    <string name="intent_err_read_file">Impossible de lire le fichier depuis l\'intent</string>
     <string name="intent_err_enter_passphrase">Saisissez la passphrase</string>
     <string name="intent_err_missing_output">Chemin de sortie manquant</string>
     <string name="intent_err_read_path_fmt">Impossible de lire %1$s</string>
     <string name="intent_err_no_output_dir">Aucun repertoire de sortie</string>
-    <string name="intent_err_no_key_data">Aucune donnee de cle dans l'intent</string>
-    <string name="intent_err_cannot_open_fmt">Impossible d'ouvrir %1$s</string>
+    <string name="intent_err_no_key_data">Aucune donnee de cle dans l\'intent</string>
+    <string name="intent_err_cannot_open_fmt">Impossible d\'ouvrir %1$s</string>
     <string name="intent_err_read_key_file">Echec de lecture du fichier de cle</string>
     <string name="intent_err_no_allowed_recipient">Aucune cle destinataire autorisee — cles Never-trusted, revoquees ou expirees ignorees</string>
-    <string name="intent_err_no_secret">Aucune cle secrete sur l'appareil</string>
+    <string name="intent_err_no_secret">Aucune cle secrete sur l\'appareil</string>
     <string name="intent_err_secret_missing">Materiel de cle secrete manquant</string>
 
 
     <string name="api_passphrase_title">Deverrouiller la cle</string>
-    <string name="api_passphrase_message">Saisissez la passphrase pour que l'application appelante puisse continuer.</string>
+    <string name="api_passphrase_message">Saisissez la passphrase pour que l\'application appelante puisse continuer.</string>
     <string name="api_passphrase_continue">Continuer</string>
 
 
@@ -627,14 +627,14 @@
     <string name="api_err_opportunistic_missing_keys">Aucune cle utilisable pour le chiffrement opportuniste</string>
 
 
-    <string name="crypto_status_mdc_degraded">MDC utilise — les destinataires n'annoncent pas SEIPDv2</string>
+    <string name="crypto_status_mdc_degraded">MDC utilise — les destinataires n\'annoncent pas SEIPDv2</string>
 
 
-    <string name="api_err_unresolved_recipients">Un ou plusieurs destinataires n'ont pas pu etre resolus — chiffrement annule</string>
+    <string name="api_err_unresolved_recipients">Un ou plusieurs destinataires n\'ont pas pu etre resolus — chiffrement annule</string>
 
 
-    <string name="crypto_err_recipients_no_seipdv2">Les destinataires n'annoncent pas SEIPDv2 — choisissez MDC ou mettez a jour leurs cles</string>
+    <string name="crypto_err_recipients_no_seipdv2">Les destinataires n\'annoncent pas SEIPDv2 — choisissez MDC ou mettez a jour leurs cles</string>
     <string name="crypto_err_no_encrypt_recipients">Aucune cle destinataire capable de chiffrement</string>
-    <string name="crypto_err_generic">Echec de l'operation crypto</string>
+    <string name="crypto_err_generic">Echec de l\'operation crypto</string>
 
 </resources>
