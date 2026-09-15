@@ -46,6 +46,9 @@ jobs:
           cache: gradle
 
       - uses: android-actions/setup-android@v4
+        with:
+          # Default includes obsolete `tools` package (removed from sdkmanager).
+          packages: platform-tools
 
       - name: Create local.properties
         run: echo "sdk.dir=${ANDROID_SDK_ROOT}" >> local.properties
@@ -104,6 +107,22 @@ jobs:
             sha256sum "$out" >> dist/release/SHA256SUMS.txt
             echo "- \`pgp-shield-${VERSION}-${abi}.apk\` — **${abi}**" >> dist/release/ABI_LIST.md
           done
+          {
+            echo "## What's new"
+            echo
+            # Extract this version's section from CHANGELOG.md (until next ## heading).
+            awk -v ver="${VERSION}" '
+              $0 ~ "^## " ver "$" {p=1; next}
+              p && $0 ~ /^## / {exit}
+              p {print}
+            ' CHANGELOG.md
+            echo
+            echo "## Downloads"
+            echo
+            cat dist/release/ABI_LIST.md
+            echo
+            echo "Checksums: see \`SHA256SUMS.txt\` attached to this release."
+          } > dist/release/RELEASE_BODY.md
           ls -lh dist/release/
           cat dist/release/SHA256SUMS.txt
 
@@ -115,7 +134,7 @@ jobs:
           generate_release_notes: true
           prerelease: false
           latest: true
-          body_path: dist/release/ABI_LIST.md
+          body_path: dist/release/RELEASE_BODY.md
           files: |
             dist/release/pgp-shield-*.apk
             dist/release/SHA256SUMS.txt
