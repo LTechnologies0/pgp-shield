@@ -20,6 +20,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material3.ExposedDropdownMenuBox
+import androidx.compose.material3.MenuAnchorType
 import androidx.compose.material3.ExposedDropdownMenuDefaults
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Button
@@ -542,7 +543,7 @@ private fun TrustLevelDropdown(
             readOnly = true,
             label = { Text("Trust level") },
             trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded) },
-            modifier = Modifier.menuAnchor().fillMaxWidth(),
+            modifier = Modifier.menuAnchor(MenuAnchorType.PrimaryNotEditable).fillMaxWidth(),
         )
         ExposedDropdownMenu(expanded = expanded, onDismissRequest = { onExpandedChange(false) }) {
             (0..3).forEach { level ->
@@ -696,7 +697,7 @@ private fun CertifyKeySheet(
                 readOnly = true,
                 label = { Text("Certifier secret key") },
                 trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(certifierMenu) },
-                modifier = Modifier.menuAnchor().fillMaxWidth(),
+                modifier = Modifier.menuAnchor(MenuAnchorType.PrimaryNotEditable).fillMaxWidth(),
             )
             ExposedDropdownMenu(expanded = certifierMenu, onDismissRequest = { certifierMenu = false }) {
                 keys.forEach { key ->
@@ -778,7 +779,7 @@ private fun AddSubkeySheet(
                 readOnly = true,
                 label = { Text("Subkey type") },
                 trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(typeMenuExpanded) },
-                modifier = Modifier.menuAnchor().fillMaxWidth(),
+                modifier = Modifier.menuAnchor(MenuAnchorType.PrimaryNotEditable).fillMaxWidth(),
             )
             ExposedDropdownMenu(
                 expanded = typeMenuExpanded,
@@ -807,7 +808,7 @@ private fun AddSubkeySheet(
                     readOnly = true,
                     label = { Text("RSA key size") },
                     trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(rsaMenuExpanded) },
-                    modifier = Modifier.menuAnchor().fillMaxWidth(),
+                    modifier = Modifier.menuAnchor(MenuAnchorType.PrimaryNotEditable).fillMaxWidth(),
                 )
                 ExposedDropdownMenu(
                     expanded = rsaMenuExpanded,
