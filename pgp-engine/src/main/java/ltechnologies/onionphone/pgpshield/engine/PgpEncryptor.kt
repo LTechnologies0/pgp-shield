@@ -332,21 +332,47 @@ class PgpEncryptor {
                     val iter = obj.publicKeys
                     while (iter.hasNext()) {
                         val key = iter.next()
-                        if (key.isEncryptionKey) keys.add(key)
+                        if (isUsableEncryptionKey(key)) keys.add(key)
                     }
-                    if (keys.isEmpty()) keys.add(obj.publicKey)
                 }
                 is PGPSecretKeyRing -> {
                     val iter = obj.secretKeys
                     while (iter.hasNext()) {
                         val key = iter.next().publicKey
-                        if (key.isEncryptionKey) keys.add(key)
+                        if (isUsableEncryptionKey(key)) keys.add(key)
                     }
-                    if (keys.isEmpty()) keys.add(obj.publicKey)
                 }
                 else -> throw PgpException("Unsupported key ring type: ${obj?.javaClass?.simpleName}")
             }
         }
+        if (keys.isEmpty()) {
+            throw PgpException("No valid encryption-capable subkey on recipient ring")
+        }
         return keys
+    }
+
+    private fun isUsableEncryptionKey(key: PGPPublicKey): Boolean {
+        if (key.isRevoked) return false
+        if (!PgpSignatureTime.keyValidAt(key, java.util.Date())) return false
+        val flags = readEncryptFlags(key)
+        val encryptBits = org.bouncycastle.bcpg.sig.KeyFlags.ENCRYPT_COMMS or
+            org.bouncycastle.bcpg.sig.KeyFlags.ENCRYPT_STORAGE
+        return if (flags != 0) {
+            flags and encryptBits != 0
+        } else {
+            key.isEncryptionKey
+        }
+    }
+
+    private fun readEncryptFlags(key: PGPPublicKey): Int {
+        var flags = 0
+        val sigs = key.signatures
+        while (sigs.hasNext()) {
+            val sig = sigs.next() as org.bouncycastle.openpgp.PGPSignature
+            val hashed = sig.hashedSubPackets ?: continue
+            val packetFlags = hashed.getKeyFlags() ?: continue
+            flags = flags or packetFlags
+        }
+        return flags
     }
 }

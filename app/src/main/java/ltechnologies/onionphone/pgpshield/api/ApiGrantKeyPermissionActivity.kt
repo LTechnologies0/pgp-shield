@@ -54,7 +54,7 @@ class ApiGrantKeyPermissionActivity : ComponentActivity() {
             return
         }
         val verifyError = try {
-            CallerVerifier.verifiedPackageFromIntent(this, packageName)
+            CallerVerifier.packageFromImmutableGrant(this, packageName)
             null
         } catch (e: Exception) {
             e.message ?: getString(R.string.api_verify_failed)

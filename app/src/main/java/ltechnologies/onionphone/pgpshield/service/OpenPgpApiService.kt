@@ -93,6 +93,8 @@ class OpenPgpApiService : Service() {
     @Inject lateinit var appLockManager: AppLockManager
     @Inject lateinit var autocryptManager: AutocryptManager
     @Inject lateinit var cryptoWarningOverrideStore: CryptoWarningOverrideStore
+    @Inject lateinit var passphraseCache: ltechnologies.onionphone.pgpshield.api.ApiPassphraseCache
+    @Inject lateinit var backupConfirmCache: ltechnologies.onionphone.pgpshield.api.ApiBackupConfirmCache
 
     private val cryptoDispatcher = Dispatchers.Default
     private val outputPipes = ConcurrentHashMap<Int, ParcelFileDescriptor>()
@@ -116,19 +118,26 @@ class OpenPgpApiService : Service() {
             return pipe[0]
         }
 
-        override fun execute(data: Intent?, input: ParcelFileDescriptor?, pipeId: Int): Intent =
-            runBlocking(cryptoDispatcher) {
-                executeInternal(data ?: Intent(), input, pipeId)
+        override fun execute(data: Intent?, input: ParcelFileDescriptor?, pipeId: Int): Intent {
+            val callingUid = Binder.getCallingUid()
+            return runBlocking(cryptoDispatcher) {
+                executeInternal(data ?: Intent(), input, pipeId, callingUid)
             }
+        }
     }
 
-    private suspend fun executeInternal(data: Intent, input: ParcelFileDescriptor?, pipeId: Int): Intent {
+    private suspend fun executeInternal(
+        data: Intent,
+        input: ParcelFileDescriptor?,
+        pipeId: Int,
+        callingUid: Int,
+    ): Intent {
         val apiVersion = data.getIntExtra(OpenPgpConstants.EXTRA_API_VERSION, -1)
         if (apiVersion < 0) {
             return errorResult(OpenPgpError.INCOMPATIBLE_API_VERSIONS, getString(R.string.api_err_missing_api_version))
         }
 
-        val callerPkg = callingPackage()
+        val callerPkg = callingPackage(callingUid)
         val action = data.action ?: return errorResult(OpenPgpError.GENERIC_ERROR, getString(R.string.api_err_missing_action))
 
         if (action == OpenPgpConstants.ACTION_CHECK_PERMISSION) {
@@ -247,7 +256,7 @@ class OpenPgpApiService : Service() {
                                 )
                             }
                             unlockInteractionOrNull(callerPkg)?.let { return null to it }
-                            signPass = data.getCharArrayExtra(OpenPgpConstants.EXTRA_PASSPHRASE)
+                            signPass = resolvePassphrase(callerPkg, data)
                                 ?: return null to passphraseInteractionResult(callerPkg)
                             signSecret = keyRepository.getArmoredSecret(
                                 findSignerSummary(signKeyId)?.masterKeyId ?: signKeyId,
@@ -395,7 +404,7 @@ class OpenPgpApiService : Service() {
         }
 
         unlockInteractionOrNull(callerPkg)?.let { return null to it }
-        val requestedPass = data.getCharArrayExtra(OpenPgpConstants.EXTRA_PASSPHRASE)
+        val requestedPass = resolvePassphrase(callerPkg, data)
             ?: return null to passphraseInteractionResult(callerPkg)
         try {
             progress(10, 100)
@@ -950,7 +959,7 @@ class OpenPgpApiService : Service() {
         }
         unlockInteractionOrNull(callerPkg)?.let { return null to it }
         try {
-            if (data.getCharArrayExtra(OpenPgpConstants.EXTRA_PASSPHRASE) == null) {
+            if (resolvePassphrase(callerPkg, data) == null) {
                 return null to passphraseInteractionResult(callerPkg)
             }
             val signed = signPayload(input, data, callerPkg, signKeyId, detached)
@@ -986,7 +995,7 @@ class OpenPgpApiService : Service() {
         requireVaultUnlocked() // defended by handleSign unlockInteractionOrNull
         val masterId = findSignerSummary(signKeyId)?.masterKeyId ?: signKeyId
         val secret = keyRepository.getArmoredSecret(masterId) ?: return null
-        val passphrase = data.getCharArrayExtra(OpenPgpConstants.EXTRA_PASSPHRASE) ?: return null
+        val passphrase = resolvePassphrase(callerPkg, data) ?: return null
         // DETACHED_SIGN: ASCII armor only when requested (openpgp-api default = binary).
         val asciiArmor = if (detached) {
             data.getBooleanExtra(OpenPgpConstants.EXTRA_REQUEST_ASCII_ARMOR, false)
@@ -1016,7 +1025,7 @@ class OpenPgpApiService : Service() {
         val keyIds = LongArray(userIds.size)
         for (index in userIds.indices) {
             val uid = userIds[index]
-            val matches = userIdDao.findByUserIdFragment(uid)
+            val matches = userIdDao.findByExactEmail(uid)
                 .map { it.masterKeyId }
                 .distinct()
             // OpenKeychain: multiple keys for one address → USER_INTERACTION picker.
@@ -1067,16 +1076,20 @@ class OpenPgpApiService : Service() {
         }
         // Resolve signing-subkey ids to the stored master ring (OpenKeychain GET_KEY).
         val masterId = findSignerSummary(requestedId)?.masterKeyId ?: requestedId
+        if (!isKeyAllowed(callerPkg, masterId)) {
+            return null to keyPermissionInteractionResult(callerPkg, longArrayOf(masterId))
+        }
         var armored = keyRepository.getArmoredPublic(masterId)
+        if (armored == null) {
+            unlockInteractionOrNull(callerPkg)?.let { return null to it }
+            armored = keyRepository.getArmoredPublic(masterId)
+        }
         if (armored == null) {
             // OKC contract: missing key → USER_INTERACTION import-from-keyserver PendingIntent.
             return null to Intent().apply {
                 putExtra(OpenPgpConstants.RESULT_CODE, OpenPgpConstants.RESULT_CODE_USER_INTERACTION_REQUIRED)
                 putExtra(OpenPgpConstants.RESULT_INTENT, importMissingSignerPendingIntent(requestedId))
             }
-        }
-        if (!isKeyAllowed(callerPkg, masterId)) {
-            return null to keyPermissionInteractionResult(callerPkg, longArrayOf(masterId))
         }
         if (data.getBooleanExtra(OpenPgpConstants.EXTRA_MINIMIZE, false)) {
             val keep = data.getStringExtra(OpenPgpConstants.EXTRA_MINIMIZE_USER_ID) ?: preferredUserId
@@ -1090,7 +1103,7 @@ class OpenPgpApiService : Service() {
     /** Any local key (secret or public) whose UID matches [userId]. */
     private suspend fun findKeyIdForUserId(userId: String?): Long? {
         val wanted = normalizeEmail(userId) ?: return null
-        userIdDao.findByUserIdFragment(wanted).firstOrNull()?.masterKeyId?.let { return it }
+        userIdDao.findByExactEmail(wanted).firstOrNull()?.masterKeyId?.let { return it }
         autocryptManager.lookup(wanted)?.let { return it }
         for (summary in keyRepository.search("")) {
             val uids = userIdDao.forKey(summary.masterKeyId).map { it.userId }.ifEmpty {
@@ -1235,11 +1248,13 @@ class OpenPgpApiService : Service() {
         val keyIds = data.getLongArrayExtra(OpenPgpConstants.EXTRA_KEY_IDS)
             ?: return null to errorResult(OpenPgpError.GENERIC_ERROR, getString(R.string.api_err_missing_key_ids))
         val backupSecret = data.getBooleanExtra(OpenPgpConstants.EXTRA_BACKUP_SECRET, false)
-        // Secret backup needs an unlocked vault (OpenKeychain always prompts for BACKUP).
+        val masterIds = keyIds.map { findSignerSummary(it)?.masterKeyId ?: it }.distinct()
         if (backupSecret) {
+            if (!backupConfirmCache.isConfirmed(callerPkg, masterIds)) {
+                return null to backupConfirmInteractionResult(callerPkg, masterIds.toLongArray())
+            }
             unlockInteractionOrNull(callerPkg)?.let { return null to it }
         }
-        val masterIds = keyIds.map { findSignerSummary(it)?.masterKeyId ?: it }.distinct()
         val blocked = masterIds.filter { !isKeyAllowed(callerPkg, it) }
         if (blocked.isNotEmpty()) {
             return null to keyPermissionInteractionResult(callerPkg, blocked.toLongArray())
@@ -1264,6 +1279,9 @@ class OpenPgpApiService : Service() {
         }
         if (builder.isEmpty()) {
             return null to errorResult(OpenPgpError.GENERIC_ERROR, getString(R.string.api_err_no_keys_export))
+        }
+        if (backupSecret) {
+            backupConfirmCache.consume(callerPkg, masterIds)
         }
         return builder.toString().toByteArray(Charsets.UTF_8) to successResult()
     }
@@ -1421,7 +1439,7 @@ class OpenPgpApiService : Service() {
         val slots = kotlinx.coroutines.coroutineScope {
             userIds.map { uid ->
                 async(Dispatchers.IO) {
-                    val matches = userIdDao.findByUserIdFragment(uid)
+                    val matches = userIdDao.findByExactEmail(uid)
                         .map { it.masterKeyId }
                         .distinct()
                     if (matches.size > 1) return@async EncryptUidSlot.Ambiguous
@@ -1549,8 +1567,7 @@ class OpenPgpApiService : Service() {
         val gossipAddrs = data.getStringArrayExtra(OpenPgpConstants.EXTRA_USER_IDS)
         gossip.forEachIndexed { index, peerUpdate ->
             if (!peerUpdate.hasKeyData()) return@forEachIndexed
-            val addr = gossipAddrs?.getOrNull(index)
-                ?: data.getStringExtra(OpenPgpConstants.EXTRA_AUTOCRYPT_PEER_ID)
+            val addr = gossipAddrs?.getOrNull(index)?.takeIf { it.isNotBlank() }
                 ?: return@forEachIndexed
             val preferMutual = peerUpdate.getPreferEncrypt() == AutocryptPeerUpdate.PreferEncrypt.MUTUAL
             autocryptManager.storePeerKeyData(addr, peerUpdate.getKeyData(), preferMutual)
@@ -1558,7 +1575,7 @@ class OpenPgpApiService : Service() {
     }
 
     private suspend fun autocryptStatusForEmail(email: String): Pair<Int, Boolean> {
-        val keyId = userIdDao.findByUserIdFragment(email).firstOrNull()?.masterKeyId
+        val keyId = userIdDao.findByExactEmail(email).firstOrNull()?.masterKeyId
             ?: autocryptManager.lookup(email)
             ?: return OpenPgpConstants.AUTOCRYPT_STATUS_UNAVAILABLE to false
         val summary = keyRepository.getKeyDetail(keyId)?.summary
@@ -1658,6 +1675,27 @@ class OpenPgpApiService : Service() {
         return keyPermissionInteractionResult(callerPkg, longArrayOf(master))
     }
 
+    private fun resolvePassphrase(packageName: String, data: Intent): CharArray? =
+        passphraseCache.peek(packageName, data.getStringExtra(OpenPgpConstants.EXTRA_PASSPHRASE_TOKEN))
+            ?: data.getCharArrayExtra(OpenPgpConstants.EXTRA_PASSPHRASE)
+
+    private fun backupConfirmInteractionResult(packageName: String, masterKeyIds: LongArray): Intent {
+        val confirm = Intent(this, ltechnologies.onionphone.pgpshield.api.ApiBackupConfirmActivity::class.java).apply {
+            putExtra(ltechnologies.onionphone.pgpshield.api.ApiBackupConfirmActivity.EXTRA_PACKAGE, packageName)
+            putExtra(ltechnologies.onionphone.pgpshield.api.ApiBackupConfirmActivity.EXTRA_KEY_IDS, masterKeyIds)
+        }
+        val pending = PendingIntent.getActivity(
+            this,
+            packageName.hashCode() xor masterKeyIds.contentHashCode() xor 0xBAC4_00,
+            confirm,
+            apiInteractionPiFlags(),
+        )
+        return Intent().apply {
+            putExtra(OpenPgpConstants.RESULT_CODE, OpenPgpConstants.RESULT_CODE_USER_INTERACTION_REQUIRED)
+            putExtra(OpenPgpConstants.RESULT_INTENT, pending)
+        }
+    }
+
     private fun keyPermissionInteractionResult(packageName: String, masterKeyIds: LongArray): Intent {
         val grant = Intent(this, ApiGrantKeyPermissionActivity::class.java).apply {
             putExtra(ApiGrantKeyPermissionActivity.EXTRA_PACKAGE, packageName)
@@ -1679,7 +1717,7 @@ class OpenPgpApiService : Service() {
         if (keyId == 0L) return false
         val masterId = findSignerSummary(keyId)?.masterKeyId ?: keyId
         val allowed = apiAllowedKeyDao.allowedKeyIds(packageName)
-        return allowed.isEmpty() || masterId in allowed || keyId in allowed
+        return masterId in allowed || keyId in allowed
     }
 
     private fun readInput(input: ParcelFileDescriptor?): ByteArray {
@@ -1713,10 +1751,10 @@ class OpenPgpApiService : Service() {
     /** Returns the OpenPGP API binder to connecting clients. */
     override fun onBind(intent: Intent?): IBinder = binder
 
-    private fun callingPackage(): String {
-        val uid = Binder.getCallingUid()
+    private fun callingPackage(callingUid: Int): String {
+        require(callingUid != android.os.Process.myUid()) { "Caller UID collapsed to process UID" }
         @Suppress("DEPRECATION")
-        val packages = packageManager.getPackagesForUid(uid) ?: emptyArray()
+        val packages = packageManager.getPackagesForUid(callingUid) ?: emptyArray()
         return packages.firstOrNull() ?: throw SecurityException("Unknown caller")
     }
 
@@ -1729,12 +1767,9 @@ class OpenPgpApiService : Service() {
         putExtra(OpenPgpConstants.RESULT_ERROR, OpenPgpError(errorId, message))
     }
 
-    /**
-     * OpenKeychain / openpgp-api clients start RESULT_INTENT via IntentSender and may
-     * supply a fill-in Intent — requires [PendingIntent.FLAG_MUTABLE] on API 31+.
-     */
+    /** Immutable PendingIntents — extras are baked in by this service. */
     private fun apiInteractionPiFlags(): Int =
-        PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_MUTABLE
+        PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
 
     private fun userInteractionResult(packageName: String): Intent {
         val grant = Intent(this, GrantApiAccessActivity::class.java).apply {

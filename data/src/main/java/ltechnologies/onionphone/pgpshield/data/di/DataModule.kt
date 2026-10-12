@@ -35,7 +35,16 @@ object DatabaseModule {
 
     private val MIGRATION_5_6 = object : Migration(5, 6) {
         override fun migrate(db: SupportSQLiteDatabase) {
-            // v6 matches current entity set; no structural SQL required when upgrading from v5.
+            // v5 overlay_app_config lacked these NOT NULL columns present in schema 6.
+            db.execSQL(
+                "ALTER TABLE overlay_app_config ADD COLUMN autoMode TEXT NOT NULL DEFAULT 'manual'",
+            )
+            db.execSQL(
+                "ALTER TABLE overlay_app_config ADD COLUMN showResultToast INTEGER NOT NULL DEFAULT 1",
+            )
+            db.execSQL(
+                "ALTER TABLE overlay_app_config ADD COLUMN requireConfirmBeforeSetText INTEGER NOT NULL DEFAULT 0",
+            )
         }
     }
 

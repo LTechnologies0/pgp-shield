@@ -62,19 +62,24 @@ class PgpShieldService : Service() {
         }
     }
     private val binder = object : IPgpShieldService.Stub() {
-        override fun checkPermission(caller: CallerIdentity): Int = runBlocking(cryptoDispatcher) {
+        override fun checkPermission(caller: CallerIdentity): Int {
+            val callingUid = Binder.getCallingUid()
+            return runBlocking(cryptoDispatcher) {
             try {
-                val pkg = CallerVerifier.verifiedPackage(this@PgpShieldService, caller)
+                val pkg = CallerVerifier.verifiedPackage(this@PgpShieldService, caller, callingUid)
                 if (apiAppDao.get(pkg) != null) 0 else 1
             } catch (e: Exception) {
                 Timber.e(e, "checkPermission failed")
                 2
             }
+            }
         }
 
-        override fun encrypt(request: EncryptRequestParcel): CryptoResultParcel = runBlocking(cryptoDispatcher) {
+        override fun encrypt(request: EncryptRequestParcel): CryptoResultParcel {
+            val callingUid = Binder.getCallingUid()
+            return runBlocking(cryptoDispatcher) {
             try {
-                val pkg = CallerVerifier.verifiedPackage(this@PgpShieldService, request.caller)
+                val pkg = CallerVerifier.verifiedPackage(this@PgpShieldService, request.caller, callingUid)
                 ensureGranted(pkg)
                 val publicKeys = kotlinx.coroutines.coroutineScope {
                     request.recipientKeyIds.toList().map { id ->
@@ -98,12 +103,15 @@ class PgpShieldService : Service() {
                 Timber.e(e, "encrypt failed")
                 CryptoResultParcel(false, errorMessage = CryptoErrors.safeMessage(e, getString(R.string.api_err_encryption_failed)))
             }
+            }
         }
 
-        override fun decrypt(request: DecryptRequestParcel): CryptoResultParcel = runBlocking(cryptoDispatcher) {
+        override fun decrypt(request: DecryptRequestParcel): CryptoResultParcel {
+            val callingUid = Binder.getCallingUid()
+            return runBlocking(cryptoDispatcher) {
             var passphrase: CharArray? = null
             try {
-                val pkg = CallerVerifier.verifiedPackage(this@PgpShieldService, request.caller)
+                val pkg = CallerVerifier.verifiedPackage(this@PgpShieldService, request.caller, callingUid)
                 ensureGranted(pkg)
                 ensureKeyAllowed(pkg, request.decryptKeyId)
                 requireVaultUnlocked()
@@ -135,12 +143,15 @@ class PgpShieldService : Service() {
             } finally {
                 passphrase?.fill('\u0000')
             }
+            }
         }
 
-        override fun sign(request: SignRequestParcel): CryptoResultParcel = runBlocking(cryptoDispatcher) {
+        override fun sign(request: SignRequestParcel): CryptoResultParcel {
+            val callingUid = Binder.getCallingUid()
+            return runBlocking(cryptoDispatcher) {
             var passphrase: CharArray? = null
             try {
-                val pkg = CallerVerifier.verifiedPackage(this@PgpShieldService, request.caller)
+                val pkg = CallerVerifier.verifiedPackage(this@PgpShieldService, request.caller, callingUid)
                 ensureGranted(pkg)
                 ensureKeyAllowed(pkg, request.signKeyId)
                 requireVaultUnlocked()
@@ -168,22 +179,26 @@ class PgpShieldService : Service() {
             } finally {
                 passphrase?.fill('\u0000')
             }
+            }
         }
 
-        override fun listKeys(packageName: String): MutableList<KeySummaryParcel> = runBlocking(cryptoDispatcher) {
+        override fun listKeys(packageName: String): MutableList<KeySummaryParcel> {
+            val callingUid = Binder.getCallingUid()
+            return runBlocking(cryptoDispatcher) {
             try {
-                val caller = CallerIdentity(packageName, Binder.getCallingUid())
-                val pkg = CallerVerifier.verifiedPackage(this@PgpShieldService, caller)
+                val caller = CallerIdentity(packageName, callingUid)
+                val pkg = CallerVerifier.verifiedPackage(this@PgpShieldService, caller, callingUid)
                 if (apiAppDao.get(pkg) == null) return@runBlocking mutableListOf()
                 val allowed = apiAllowedKeyDao.allowedKeyIds(pkg)
                 keyRepository.search("").mapNotNull { key ->
-                    if (allowed.isNotEmpty() && key.masterKeyId !in allowed) return@mapNotNull null
+                    if (key.masterKeyId !in allowed) return@mapNotNull null
                     KeySummaryParcel(key.masterKeyId, key.fingerprint, key.primaryUserId, key.isSecret)
                 }.toMutableList()
             } catch (e: Exception) {
                 Timber.e(e, "listKeys failed")
                 mutableListOf()
             }
+        }
         }
     }
 
@@ -193,7 +208,7 @@ class PgpShieldService : Service() {
 
     private suspend fun ensureKeyAllowed(packageName: String, keyId: Long) {
         val allowed = apiAllowedKeyDao.allowedKeyIds(packageName)
-        if (allowed.isNotEmpty() && keyId !in allowed) {
+        if (keyId !in allowed) {
             throw SecurityException(getString(R.string.svc_err_key_not_allowed))
         }
     }

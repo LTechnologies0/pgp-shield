@@ -318,6 +318,9 @@
     <string name="api_grant">Grant</string>
     <string name="api_deny">Deny</string>
     <string name="api_verify_failed">Caller verification failed</string>
+    <string name="api_backup_confirm_title">Export secret keys?</string>
+    <string name="api_backup_confirm_message_fmt">%1$s wants to export %2$d secret key(s). Confirm only if you started this backup.</string>
+    <string name="api_backup_confirm_export">Export secrets</string>
 
     <string name="onboarding_overlay_setup_title">Overlay setup</string>
     <string name="onboarding_accessibility_enabled">Accessibility service enabled</string>
@@ -519,6 +522,8 @@
     <string name="overlay_status_tap_again">Tap again to apply</string>
     <string name="overlay_status_encrypted_fmt">Encrypted (%1$s)</string>
     <string name="overlay_status_decrypted">Decrypted</string>
+    <string name="overlay_status_unlock_required">Unlock PGP Shield to continue</string>
+    <string name="overlay_plaintext_title">Decrypted text</string>
     <string name="overlay_toast_encrypted">Overlay encrypted</string>
     <string name="overlay_toast_decrypted">Overlay decrypted</string>
     <string name="overlay_status_parsed_fmt">Parsed via %1$s</string>

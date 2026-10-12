@@ -40,6 +40,7 @@ import javax.inject.Inject
 @AndroidEntryPoint
 class ApiPassphraseActivity : ComponentActivity() {
     @Inject lateinit var settingsRepository: SettingsRepository
+    @Inject lateinit var passphraseCache: ApiPassphraseCache
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -77,12 +78,21 @@ class ApiPassphraseActivity : ComponentActivity() {
                         Button(
                             onClick = {
                                 val chars = passphrase.toCharArray()
-                                passphrase = ""
+                                val caller = intent.getStringExtra(EXTRA_CALLER_PACKAGE).orEmpty()
+                                if (caller.isBlank()) {
+                                    chars.fill('\u0000')
+                                    setResult(Activity.RESULT_CANCELED)
+                                    finish()
+                                    return@Button
+                                }
+                                val token = passphraseCache.put(caller, chars)
+                                chars.fill('\u0000')
                                 setResult(
                                     Activity.RESULT_OK,
-                                    Intent().putExtra(OpenPgpConstants.EXTRA_PASSPHRASE, chars),
+                                    Intent().apply {
+                                        putExtra(OpenPgpConstants.EXTRA_PASSPHRASE_TOKEN, token)
+                                    },
                                 )
-                                chars.fill('\u0000')
                                 finish()
                             },
                             enabled = passphrase.isNotBlank(),

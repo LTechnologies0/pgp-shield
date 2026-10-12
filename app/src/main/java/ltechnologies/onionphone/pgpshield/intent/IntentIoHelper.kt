@@ -36,14 +36,16 @@ object IntentIoHelper {
      */
     suspend fun readUriBytes(context: Context, uri: Uri): ByteArray =
         withContext(Dispatchers.IO) {
-            context.contentResolver.openInputStream(uri)?.use { PgpIo.readLimited(it) }
-                ?: throw IllegalStateException(context.getString(R.string.intent_cannot_open_uri_fmt, uri))
+            val allowed = ShareUriPolicy.requireContentUri(uri)
+            context.contentResolver.openInputStream(allowed)?.use { PgpIo.readLimited(it) }
+                ?: throw IllegalStateException(context.getString(R.string.intent_cannot_open_uri_fmt, allowed))
         }
 
     /** Reads [uri] returning its display name paired with its bytes, or `null` on failure. */
     suspend fun readUriNamed(context: Context, uri: Uri): Pair<String, ByteArray>? =
         withContext(Dispatchers.IO) {
             try {
+                if (!ShareUriPolicy.isAllowedContentScheme(uri.scheme)) return@withContext null
                 val name = uri.lastPathSegment?.substringAfterLast('/') ?: "file.bin"
                 val bytes = context.contentResolver.openInputStream(uri)?.use { PgpIo.readLimited(it) }
                     ?: return@withContext null
@@ -107,14 +109,51 @@ object IntentIoHelper {
         context: Context,
         keyRepository: KeyRepository,
         settingsRepository: SettingsRepository,
-    ): ByteArray = withContext(Dispatchers.IO) {
+    ): ByteArray = loadDecryptSecretKeys(context, keyRepository, settingsRepository).first()
+
+    /**
+     * Secret rings to try for share-intent decrypt, default sign key first then
+     * every other local secret (fail closed if none exist).
+     */
+    suspend fun loadDecryptSecretKeys(
+        context: Context,
+        keyRepository: KeyRepository,
+        settingsRepository: SettingsRepository,
+    ): List<ByteArray> = withContext(Dispatchers.IO) {
         val settings = settingsRepository.current()
-        val keys = keyRepository.observeKeys().first()
-        val keyId = settings.defaultSignKeyId
-            ?: keys.firstOrNull { it.isSecret }?.masterKeyId
-            ?: error(context.getString(R.string.intent_no_secret_key))
-        keyRepository.getArmoredSecret(keyId)
-            ?: error(context.getString(R.string.intent_secret_key_missing))
+        val secrets = keyRepository.observeKeys().first().filter { it.isSecret }
+        if (secrets.isEmpty()) error(context.getString(R.string.intent_no_secret_key))
+        val ordered = buildList {
+            val preferred = settings.defaultSignKeyId
+            if (preferred != null) {
+                secrets.firstOrNull { it.masterKeyId == preferred }?.let { add(it) }
+            }
+            secrets.filter { it.masterKeyId != preferred }.forEach { add(it) }
+        }
+        val rings = ordered.mapNotNull { keyRepository.getArmoredSecret(it.masterKeyId) }
+        if (rings.isEmpty()) error(context.getString(R.string.intent_secret_key_missing))
+        rings
+    }
+
+    /** Tries [decryptOne] against each local secret until one succeeds. */
+    suspend fun <T> decryptTryingAllSecrets(
+        context: Context,
+        keyRepository: KeyRepository,
+        settingsRepository: SettingsRepository,
+        decryptOne: (ByteArray) -> T,
+    ): T {
+        val secrets = loadDecryptSecretKeys(context, keyRepository, settingsRepository)
+        var last: Exception? = null
+        for (secret in secrets) {
+            try {
+                return decryptOne(secret)
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                last = e
+            }
+        }
+        throw last ?: IllegalStateException(context.getString(R.string.intent_no_secret_key))
     }
 
     /**

@@ -48,6 +48,7 @@ import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicLong
 import javax.inject.Inject
 import javax.inject.Singleton
+import kotlinx.coroutines.CoroutineExceptionHandler
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -74,6 +75,7 @@ class OverlayCoordinator @Inject constructor(
     private val paddingTemplateDao: PaddingTemplateDao,
     private val settingsRepository: SettingsRepository,
     private val passphraseSession: OverlayPassphraseSession,
+    private val appLockManager: ltechnologies.onionphone.pgpshield.security.AppLockManager,
 ) {
     private data class FocusTarget(
         val node: android.view.accessibility.AccessibilityNodeInfo,
@@ -81,7 +83,26 @@ class OverlayCoordinator @Inject constructor(
         val viewId: String?,
     )
 
-    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
+    private data class PendingOverlayResult(
+        val pkg: String,
+        val windowId: Int,
+        val viewId: String?,
+        val sourceText: String,
+        val result: String,
+    ) {
+        fun matches(pkg: String, windowId: Int, viewId: String?, sourceText: String): Boolean =
+            this.pkg == pkg &&
+                this.windowId == windowId &&
+                this.viewId == viewId &&
+                this.sourceText == sourceText
+    }
+
+    private val overlayHandler = CoroutineExceptionHandler { _, error ->
+        Timber.e(error, "Overlay action crashed")
+        routeToUnlockIfLocked()
+    }
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate + overlayHandler)
+    private var pendingConfirm: PendingOverlayResult? = null
     private val paddingEncoder = PaddingEncoder()
     private val symmetricEncoder = SymmetricEncoder()
     /** Lock-free single-flight: CAS false→true claims the overlay action edge. */
@@ -274,12 +295,32 @@ class OverlayCoordinator @Inject constructor(
                     return
                 }
             }
-            val result = withContext(Dispatchers.Default) {
-                if (isEncrypt) {
-                    encodeText(text, config, method)
-                } else {
-                    decodeTextSmart(text, config, method)
+            if (isEncrypt && config.requireConfirmBeforeSetText && !fromAutoSend) {
+                val pending = pendingConfirm
+                if (pending != null && pending.matches(pkg, target.windowId, target.viewId, text)) {
+                    pendingConfirm = null
+                    applyOutput(node, pending.result, config, onlyClipboard = false)
+                    setStatus(str(R.string.overlay_status_encrypted_fmt, EncodingRegistry.toId(method)))
+                    if (config.showResultToast) {
+                        toast(str(R.string.overlay_toast_encrypted))
+                    }
+                    return
                 }
+            }
+            val result = try {
+                withContext(Dispatchers.Default) {
+                    if (isEncrypt) {
+                        encodeText(text, config, method)
+                    } else {
+                        decodeTextSmart(text, config, method)
+                    }
+                }
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                Timber.e(e, "Overlay crypto failed")
+                routeToUnlockIfLocked()
+                null
             }
             if (result == null) {
                 setStatus(
@@ -290,9 +331,14 @@ class OverlayCoordinator @Inject constructor(
                 )
                 return
             }
+            if (!isEncrypt) {
+                showSecurePlaintext(result)
+                setStatus(str(R.string.overlay_status_decrypted))
+                return
+            }
             if (config.requireConfirmBeforeSetText && !fromAutoSend) {
+                pendingConfirm = PendingOverlayResult(pkg, target.windowId, target.viewId, text, result)
                 setStatus(str(R.string.overlay_status_tap_again))
-                applyOutput(node, result, config, onlyClipboard = true)
                 return
             }
             applyOutput(node, result, config, onlyClipboard = false)
@@ -423,8 +469,11 @@ class OverlayCoordinator @Inject constructor(
         }
     }
 
+    private fun conversationSecretId(packageName: String): Long =
+        packageName.hashCode().toLong() xor CONVERSATION_SECRET_MIX
+
     private fun symmetricEncode(text: String, config: OverlayAppConfigEntity): String? {
-        val keyId = config.decryptKeyId ?: return null
+        val keyId = conversationSecretId(config.packageName)
         var passphrase = passphraseSession.get(keyId)
         if (passphrase == null) {
             requestPassphrasePrompt(keyId)
@@ -439,7 +488,7 @@ class OverlayCoordinator @Inject constructor(
     }
 
     private fun symmetricDecode(text: String, config: OverlayAppConfigEntity): String? {
-        val keyId = config.decryptKeyId ?: return null
+        val keyId = conversationSecretId(config.packageName)
         var passphrase = passphraseSession.get(keyId)
         if (passphrase == null) {
             requestPassphrasePrompt(keyId)
@@ -523,6 +572,31 @@ class OverlayCoordinator @Inject constructor(
     private fun toast(message: String) {
         val acs = service ?: return
         Toast.makeText(acs, message, Toast.LENGTH_SHORT).show()
+    }
+
+    private fun showSecurePlaintext(plaintext: String) {
+        val acs = service ?: return
+        val intent = Intent(acs, OverlayPlaintextActivity::class.java)
+            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            .putExtra(OverlayPlaintextActivity.EXTRA_PLAINTEXT, plaintext)
+        try {
+            acs.startActivity(intent)
+        } catch (e: ActivityNotFoundException) {
+            Timber.w(e, "Overlay plaintext window unavailable")
+        }
+    }
+
+    private fun routeToUnlockIfLocked() {
+        if (appLockManager.isUnlocked) return
+        val acs = service ?: return
+        val intent = Intent(acs, ltechnologies.onionphone.pgpshield.api.ApiUnlockActivity::class.java)
+            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        try {
+            acs.startActivity(intent)
+            setStatus(str(R.string.overlay_status_unlock_required))
+        } catch (e: ActivityNotFoundException) {
+            Timber.w(e, "Overlay unlock activity unavailable")
+        }
     }
 
     private fun requestPassphrasePrompt(keyId: Long) {
@@ -626,5 +700,10 @@ class OverlayCoordinator @Inject constructor(
             viewId = node.viewIdResourceName,
         )
         setStatus(str(R.string.overlay_status_field_ready))
+    }
+
+    private companion object {
+        // Bit pattern 0xC0A1E5CEC0DE0000; written as a signed Long (Kotlin rejects the unsigned literal).
+        const val CONVERSATION_SECRET_MIX = -0x3F5E1A313F220000L
     }
 }

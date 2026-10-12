@@ -67,8 +67,14 @@ class EncryptedBlobStore @Inject constructor(
         return path.absolutePath
     }
 
-    override fun read(path: String): ByteArray {
-        vaultAccessPolicy.assertSecretsAccessible()
+    override fun read(path: String): ByteArray = readInternal(path, requireVault = true)
+
+    override fun readPublic(path: String): ByteArray = readInternal(path, requireVault = false)
+
+    private fun readInternal(path: String, requireVault: Boolean): ByteArray {
+        if (requireVault) {
+            vaultAccessPolicy.assertSecretsAccessible()
+        }
         ensureKeysetReady()
         val file = File(path)
         recoverIncompleteIfNeeded(file)

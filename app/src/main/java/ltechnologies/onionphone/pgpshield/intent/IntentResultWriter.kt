@@ -42,9 +42,6 @@ object IntentResultWriter {
             ?: error(context.getString(R.string.intent_no_output_directory))
         val outFile = File(outDir, gpgOutputName(source.name))
         outFile.writeBytes(ciphertext)
-        if (intent.getBooleanExtra(PgpIntentActions.EXTRA_DELETE_SOURCE, false)) {
-            source.delete()
-        }
         return outFile
     }
 
@@ -64,9 +61,6 @@ object IntentResultWriter {
             ?: error(context.getString(R.string.intent_no_output_directory))
         val outFile = File(outDir, decryptedOutputName(source.name))
         outFile.writeBytes(plaintext)
-        if (intent.getBooleanExtra(PgpIntentActions.EXTRA_DELETE_SOURCE, false)) {
-            source.delete()
-        }
         return outFile
     }
 

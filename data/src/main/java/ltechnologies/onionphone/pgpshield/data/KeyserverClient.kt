@@ -24,6 +24,10 @@ class KeyserverClient @Inject constructor() {
      */
     @Volatile
     var allowLoopbackCleartextForTests: Boolean = false
+        set(value) {
+            field = value
+            TorSocks.bypassForTests = value
+        }
 
     /**
      * Fetches an armored public key from [baseUrl] matching [query].
@@ -42,7 +46,9 @@ class KeyserverClient @Inject constructor() {
         val url = buildLookupUrl(base, trimmed)
         val conn = openGetFollowingHttpsRedirects(url)
         try {
-            return readArmoredKey(conn)
+            val body = readArmoredKey(conn)
+            requireFetchedFingerprintMatches(trimmed, body)
+            return body
         } finally {
             conn.disconnect()
         }
@@ -161,12 +167,21 @@ class KeyserverClient @Inject constructor() {
 
     private fun openConnection(url: String, method: String): HttpURLConnection {
         assertAllowedBaseUrl(url)
-        return (URI(url).toURL().openConnection() as HttpURLConnection).apply {
+        return TorSocks.openConnection(url, method).apply {
             connectTimeout = TIMEOUT_MS
             readTimeout = TIMEOUT_MS
-            requestMethod = method
-            // Follow HTTPS redirects manually so Location cannot downgrade to cleartext.
-            instanceFollowRedirects = false
+        }
+    }
+
+    private fun requireFetchedFingerprintMatches(query: String, body: ByteArray) {
+        val compact = query.replace(" ", "").uppercase()
+        if (!FINGERPRINT_RE.matches(compact)) return
+        val rings = ltechnologies.onionphone.pgpshield.engine.KeyRingReader().readAllRings(body)
+        val match = rings.any { ring ->
+            ring.info.fingerprint.replace(" ", "").equals(compact, ignoreCase = true)
+        }
+        if (!match) {
+            throw PgpException("Fetched fingerprint does not match requested key")
         }
     }
 

@@ -265,9 +265,12 @@ class PgpDecryptor {
         factory: PGPObjectFactory,
         signerKeys: (Long) -> PGPPublicKey?,
     ): DecryptResult {
-        val ops = opsList[0] as PGPOnePassSignature
-        val key = signerKeys(ops.keyID)
-        if (key != null) {
+        val opsCount = opsList.size()
+        val opsArray = Array(opsCount) { i -> opsList[i] as PGPOnePassSignature }
+        val keys = Array(opsCount) { i -> signerKeys(opsArray[i].keyID) }
+        for (i in 0 until opsCount) {
+            val key = keys[i] ?: continue
+            val ops = opsArray[i]
             CryptoProgress.stage(CryptoStage.VERIFY_SIGNATURE)
             PgpAlgorithmPolicy.requireAllowedHash(ops.hashAlgorithm)
             PgpAlgorithmPolicy.requireHashStrengthForKey(key, ops.hashAlgorithm)
@@ -290,27 +293,35 @@ class PgpDecryptor {
             ?: throw PgpException("Expected literal after one-pass signature")
         val plaintext = literal.inputStream.use { input ->
             val bytes = PgpIo.readLimited(input)
-            if (key != null) {
-                ops.update(bytes)
+            for (i in 0 until opsCount) {
+                if (keys[i] != null) opsArray[i].update(bytes)
             }
             bytes
         }
         val sigList = factory.nextObject() as? PGPSignatureList
             ?: throw PgpException("Missing signature after one-pass literal")
-        val sig = sigList[0] as PGPSignature
-        if (key != null) {
+        val pairs = OnePassSignaturePairing.pairIndices(opsCount, sigList.size())
+        var signatureValid = false
+        var signerKeyId: Long? = opsArray.firstOrNull()?.keyID
+        var signatureTimestampMs: Long? = null
+        for ((opsIndex, sigIndex) in pairs) {
+            val ops = opsArray[opsIndex]
+            val sig = sigList[sigIndex] as PGPSignature
+            val key = keys[opsIndex]
+            if (key == null) continue
             PgpAlgorithmPolicy.requireAllowedHash(sig.hashAlgorithm)
             PgpAlgorithmPolicy.requireHashStrengthForKey(key, sig.hashAlgorithm)
-        }
-
-        val signatureValid = if (key != null) {
-            try {
+            val validAtCreation = PgpSignatureTime.keyValidAt(key, sig.creationTime)
+            val ok = validAtCreation && try {
                 ops.verify(sig)
             } catch (_: Exception) {
                 false
             }
-        } else {
-            false
+            if (ok && !signatureValid) {
+                signatureValid = true
+                signerKeyId = ops.keyID
+                signatureTimestampMs = sig.creationTime?.time
+            }
         }
 
         return DecryptResult(
@@ -318,10 +329,10 @@ class PgpDecryptor {
             fileName = literal.fileName,
             verified = true,
             signatureValid = signatureValid,
-            signerKeyId = ops.keyID,
+            signerKeyId = signerKeyId,
             modificationTimeMs = literal.modificationTime?.time ?: 0L,
             mimeType = mimeTypeForLiteral(literal),
-            signatureTimestampMs = sig.creationTime?.time,
+            signatureTimestampMs = signatureTimestampMs,
         )
     }
 

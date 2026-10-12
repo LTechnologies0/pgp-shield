@@ -308,6 +308,9 @@
     <string name="api_grant">Permitir</string>
     <string name="api_deny">Denegar</string>
     <string name="api_verify_failed">Fallo la verificacion del llamador</string>
+    <string name="api_backup_confirm_title">¿Exportar claves secretas?</string>
+    <string name="api_backup_confirm_message_fmt">%1$s quiere exportar %2$d clave(s) secreta(s). Confirme solo si usted inicio esta copia.</string>
+    <string name="api_backup_confirm_export">Exportar secretos</string>
     <string name="onboarding_overlay_setup_title">Configuración de overlay</string>
     <string name="onboarding_accessibility_enabled">Servicio de accesibilidad activado</string>
     <string name="onboarding_accessibility_required">Servicio de accesibilidad requerido</string>
@@ -512,6 +515,8 @@
     <string name="overlay_status_tap_again">Toca de nuevo para aplicar</string>
     <string name="overlay_status_encrypted_fmt">Cifrado (%1$s)</string>
     <string name="overlay_status_decrypted">Descifrado</string>
+    <string name="overlay_status_unlock_required">Desbloquee PGP Shield para continuar</string>
+    <string name="overlay_plaintext_title">Texto descifrado</string>
     <string name="overlay_toast_encrypted">Overlay cifrado</string>
     <string name="overlay_toast_decrypted">Overlay descifrado</string>
     <string name="overlay_status_parsed_fmt">Analizado via %1$s</string>

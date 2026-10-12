@@ -7,7 +7,9 @@ import ltechnologies.onionphone.pgpshield.data.security.HardwarePassphraseVault
 import ltechnologies.onionphone.pgpshield.data.vault.KeyBlobStore
 import ltechnologies.onionphone.pgpshield.engine.AlgorithmLabels
 import ltechnologies.onionphone.pgpshield.engine.KeyRingExporter
+import ltechnologies.onionphone.pgpshield.engine.KeyRingMerger
 import ltechnologies.onionphone.pgpshield.engine.KeyRingReader
+import ltechnologies.onionphone.pgpshield.engine.ParsedKeyRing
 import ltechnologies.onionphone.pgpshield.engine.PgpAlgorithmPolicy
 import ltechnologies.onionphone.pgpshield.engine.model.KeyRingInfo
 import javax.inject.Inject
@@ -50,20 +52,53 @@ class KeyRepositoryImpl @Inject constructor(
     /** @see KeyRepository.importKeyRing */
     override suspend fun importKeyRing(armored: ByteArray, secret: Boolean): KeyRingInfo {
         ImportGuard.checkSize(armored)
-        val info = readAndValidate(armored, secret)
-        val (path, publicPath) = coroutineScope {
-            val secretDef = async(Dispatchers.IO) { blobStore.write(info.masterKeyId, armored) }
-            val publicDef = if (secret) {
-                async(Dispatchers.IO) {
-                    blobStore.writePublic(info.masterKeyId, KeyRingExporter.publicArmoredFromSecret(armored))
-                }
+        val rings = reader.readAllRings(armored)
+        var last: KeyRingInfo? = null
+        for (parsed in rings) {
+            last = importParsedRing(parsed)
+        }
+        return last ?: error("No key ring found")
+    }
+
+    private suspend fun importParsedRing(parsed: ParsedKeyRing): KeyRingInfo {
+        PgpAlgorithmPolicy.validateKeyRing(parsed.info, allowRevoked = parsed.info.isRevoked)
+        val existing = database.keyRingDao().getById(parsed.info.masterKeyId)
+        val incomingPublic = if (parsed.secret) {
+            KeyRingExporter.publicArmoredFromSecret(parsed.armored)
+        } else {
+            parsed.armored
+        }
+        val existingPublic = existing?.let { entity ->
+            entity.publicBlobPath?.let { path ->
+                runCatching { blobStore.readPublic(path) }.getOrNull()
+            } ?: if (!entity.isSecret) {
+                runCatching { blobStore.readPublic(entity.blobPath) }.getOrNull()
             } else {
                 null
             }
-            secretDef.await() to publicDef?.await()
         }
-        persist(info, path, publicPath, secret, algorithmLabel(info))
-        return info
+        val mergedPublic = if (existingPublic != null) {
+            KeyRingMerger.joinPublic(existingPublic, incomingPublic)
+        } else {
+            incomingPublic
+        }
+        val (path, publicPath) = coroutineScope {
+            val secretDef = async(Dispatchers.IO) {
+                if (parsed.secret) {
+                    blobStore.write(parsed.info.masterKeyId, parsed.armored)
+                } else if (existing?.isSecret == true) {
+                    existing.blobPath
+                } else {
+                    blobStore.write(parsed.info.masterKeyId, mergedPublic)
+                }
+            }
+            val publicDef = async(Dispatchers.IO) {
+                blobStore.writePublic(parsed.info.masterKeyId, mergedPublic)
+            }
+            secretDef.await() to publicDef.await()
+        }
+        persist(parsed.info, path, publicPath, parsed.secret, algorithmLabel(parsed.info))
+        return parsed.info
     }
 
     /** @see KeyRepository.importGeneratedKeyRing */
@@ -162,14 +197,20 @@ class KeyRepositoryImpl @Inject constructor(
         val entity = database.keyRingDao().getById(keyId) ?: return null
         entity.publicBlobPath?.let { path ->
             if (!blobStore.ensureBlobPresent(path)) return@let
-            return blobStore.read(path)
+            return blobStore.readPublic(path)
+        }
+        if (!entity.isSecret) {
+            if (!blobStore.ensureBlobPresent(entity.blobPath)) return null
+            return blobStore.readPublic(entity.blobPath)
         }
         if (!blobStore.ensureBlobPresent(entity.blobPath)) return null
-        val blob = blobStore.read(entity.blobPath)
-        return if (entity.isSecret) {
-            KeyRingExporter.publicArmoredFromSecret(blob)
-        } else {
-            blob
+        return try {
+            KeyRingExporter.publicArmoredFromSecret(blobStore.read(entity.blobPath))
+        } catch (_: IllegalStateException) {
+            // Vault locked — public path missing; do not throw into API callers.
+            null
+        } catch (_: IllegalArgumentException) {
+            null
         }
     }
 
@@ -396,12 +437,13 @@ class KeyRepositoryImpl @Inject constructor(
         } else {
             blobPath
         }
+        val stickyRevoked = existing?.isRevoked == true || info.isRevoked
         database.keyRingDao().insert(
             KeyRingEntity(
                 masterKeyId = info.masterKeyId,
                 fingerprint = info.fingerprint,
                 isSecret = mergedSecret,
-                isRevoked = info.isRevoked,
+                isRevoked = stickyRevoked,
                 blobPath = mergedBlobPath,
                 publicBlobPath = mergedPublicPath,
                 createdAt = mergedCreatedAt,

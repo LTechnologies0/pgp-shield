@@ -49,11 +49,11 @@ class OverlayPassphrasePromptActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         WindowSecureHelper.bind(this, settingsRepository)
-        val keyId = intent.getLongExtra(EXTRA_KEY_ID, -1L)
-        if (keyId < 0L) {
+        if (!intent.hasExtra(EXTRA_KEY_ID)) {
             finish()
             return
         }
+        val keyId = intent.getLongExtra(EXTRA_KEY_ID, 0L)
         enableEdgeToEdge()
         setContent {
             PgpShieldTheme {

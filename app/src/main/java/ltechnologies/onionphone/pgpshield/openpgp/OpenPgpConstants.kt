@@ -46,6 +46,8 @@ object OpenPgpConstants {
     const val EXTRA_KEY_IDS_SELECTED = "key_ids_selected"
     const val EXTRA_SIGN_KEY_ID = "sign_key_id"
     const val EXTRA_PASSPHRASE = "passphrase"
+    /** Service-side passphrase cache token (never a secret itself). */
+    const val EXTRA_PASSPHRASE_TOKEN = "passphrase_token"
     const val EXTRA_ORIGINAL_FILENAME = "original_filename"
     const val EXTRA_ENABLE_COMPRESSION = "enable_compression"
     const val EXTRA_OPPORTUNISTIC_ENCRYPTION = "opportunistic"

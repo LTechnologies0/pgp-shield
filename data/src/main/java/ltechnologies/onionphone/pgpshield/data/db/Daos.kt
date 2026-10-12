@@ -62,9 +62,21 @@ interface UserIdDao {
     @Query("SELECT * FROM user_ids WHERE masterKeyId = :keyId")
     suspend fun forKey(keyId: Long): List<UserIdEntity>
 
-    /** Case-insensitive substring match on [UserIdEntity.userId]. */
-    @Query("SELECT * FROM user_ids WHERE LOWER(userId) LIKE '%' || LOWER(:fragment) || '%'")
-    suspend fun findByUserIdFragment(fragment: String): List<UserIdEntity>
+    /** Exact case-insensitive user-id string match (no LIKE / wildcards). */
+    @Query("SELECT * FROM user_ids WHERE LOWER(userId) = LOWER(:userId)")
+    suspend fun findByExactUserId(userId: String): List<UserIdEntity>
+
+    /**
+     * Exact email match against stored user ids (`user@host` or `Name <user@host>`).
+     * Never uses SQL LIKE — wildcards in [email] cannot widen the result.
+     */
+    suspend fun findByExactEmail(email: String): List<UserIdEntity> {
+        val wanted = ltechnologies.onionphone.pgpshield.engine.EmailAddress.normalize(email)
+            ?: return emptyList()
+        return getAll().filter {
+            ltechnologies.onionphone.pgpshield.engine.EmailAddress.userIdMatchesEmail(it.userId, wanted)
+        }
+    }
 
     /** Inserts or replaces a batch of user id rows. */
     @Insert(onConflict = OnConflictStrategy.REPLACE)

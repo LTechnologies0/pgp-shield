@@ -143,6 +143,7 @@ class EncryptMultipleActivity : LockedIntentActivity() {
         val loaded = coroutineScope {
             uris.mapIndexed { index, source ->
                 async(Dispatchers.IO) {
+                    if (!ShareUriPolicy.isAllowedContentScheme(source.scheme)) return@async null
                     val bytes = contentResolver.openInputStream(source)?.use { PgpIo.readLimited(it) }
                         ?: return@async null
                     val name = source.lastPathSegment ?: "file$index.bin"

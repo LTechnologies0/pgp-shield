@@ -88,12 +88,12 @@ class PgpShieldApplication : Application() {
         ProcessLifecycleOwner.get().lifecycle.addObserver(
             object : DefaultLifecycleObserver {
                 override fun onStop(owner: LifecycleOwner) {
-                    // Multi-window / recent-apps: re-lock when process leaves foreground.
-                    overlayPassphraseSession.clearAll()
+                    // Overlay passphrases stay until screen-off or TTL — do not wipe onStop.
                     appLockManager.lock()
                 }
             },
         )
+        ltechnologies.onionphone.pgpshield.util.ShareCacheSweeper.sweep(this)
         appScope.launch {
             runCatching { encryptedBlobStore.warmKeyset() }
                 .onFailure { Timber.w(it, "Vault keyset warm-up deferred") }

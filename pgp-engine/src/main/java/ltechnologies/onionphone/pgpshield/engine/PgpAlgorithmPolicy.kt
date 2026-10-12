@@ -442,8 +442,9 @@ object PgpAlgorithmPolicy {
                     )
                 }
             }
-            if (!allowRevoked && subkey.isRevoked) {
-                throw PgpException("Subkey revoked", SecurityProblem.REVOKED_KEY)
+            if (subkey.isRevoked) {
+                // One revoked historical subkey must not reject the whole ring.
+                continue
             }
         }
         if (!allowExpired && isKeyRingExpired(info, now)) {

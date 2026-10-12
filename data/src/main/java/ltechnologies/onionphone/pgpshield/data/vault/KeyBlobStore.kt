@@ -22,9 +22,14 @@ interface KeyBlobStore {
     fun writePublic(keyId: Long, data: ByteArray): String
 
     /**
-     * Loads and decrypts key ring bytes from [path].
+     * Loads and decrypts key ring bytes from [path] (secret material; vault must be unlocked).
      */
     fun read(path: String): ByteArray
+
+    /**
+     * Loads public key ring bytes from [path] even when the secret vault is locked.
+     */
+    fun readPublic(path: String): ByteArray = read(path)
 
     /**
      * Removes the blob at [path], including any secure-wipe steps the implementation supports.

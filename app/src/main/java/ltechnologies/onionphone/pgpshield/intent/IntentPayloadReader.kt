@@ -29,7 +29,11 @@ object IntentPayloadReader {
                 ?.takeIf { it.isNotBlank() }?.let { return it }
         }
         val uri = intent.data
-        if (uri != null && activity != null && (intent.type?.startsWith("text/") == true || looksLikeTextUri(uri))) {
+        if (uri != null &&
+            activity != null &&
+            ShareUriPolicy.isAllowedContentScheme(uri.scheme) &&
+            (intent.type?.startsWith("text/") == true || looksLikeTextUri(uri))
+        ) {
             return try {
                 activity.contentResolver.openInputStream(uri)?.use { stream ->
                     String(PgpIo.readLimited(stream, maxBytes = 512 * 1024), Charsets.UTF_8)
@@ -57,9 +61,11 @@ object IntentPayloadReader {
     }
 
     private fun resolvePayloadUri(intent: Intent): Uri? {
-        intent.data?.let { return it }
-        intentStreamUri(intent)?.let { return it }
-        return intent.clipData?.takeIf { it.itemCount > 0 }?.getItemAt(0)?.uri
+        val raw = intent.data
+            ?: intentStreamUri(intent)
+            ?: intent.clipData?.takeIf { it.itemCount > 0 }?.getItemAt(0)?.uri
+            ?: return null
+        return raw.takeIf { ShareUriPolicy.isAllowedContentScheme(it.scheme) }
     }
 
     @Suppress("DEPRECATION")

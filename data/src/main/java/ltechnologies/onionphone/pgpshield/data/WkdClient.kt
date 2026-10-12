@@ -5,7 +5,6 @@ package ltechnologies.onionphone.pgpshield.data
  */
 
 import java.io.ByteArrayOutputStream
-import java.net.HttpURLConnection
 import java.net.URI
 import java.security.MessageDigest
 import java.util.Locale
@@ -38,11 +37,9 @@ class WkdClient @Inject constructor() {
         require(url.startsWith("https://", ignoreCase = true)) { "WKD requires HTTPS" }
         require(redirectDepth <= 3) { "WKD too many redirects" }
         // Do not auto-follow redirects: Location could leave HTTPS (SSRF / downgrade).
-        val conn = (URI(url).toURL().openConnection() as HttpURLConnection).apply {
-            requestMethod = "GET"
+        val conn = TorSocks.openConnection(url, "GET").apply {
             connectTimeout = 12_000
             readTimeout = 20_000
-            instanceFollowRedirects = false
             setRequestProperty("Accept", "application/octet-stream, application/pgp-keys, */*")
         }
         try {

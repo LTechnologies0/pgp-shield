@@ -141,6 +141,9 @@ class PgpVerifier {
         CryptoProgress.stage(CryptoStage.VERIFY_SIGNATURE)
         PgpAlgorithmPolicy.requireAllowedHash(sig.hashAlgorithm)
         PgpAlgorithmPolicy.requireHashStrengthForKey(key, sig.hashAlgorithm)
+        if (!PgpSignatureTime.keyValidAt(key, sig.creationTime)) {
+            return false
+        }
         val useBc = PgpOperators.useBcForPublicKey(key)
         return try {
             sig.init(PgpOperators.contentVerifierProvider(useBc), key)

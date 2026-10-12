@@ -80,6 +80,16 @@
             android:theme="@style/Theme.PgpShield" />
 
         <activity
+            android:name=".api.ApiBackupConfirmActivity"
+            android:exported="false"
+            android:theme="@style/Theme.PgpShield" />
+
+        <activity
+            android:name=".overlay.OverlayPlaintextActivity"
+            android:exported="false"
+            android:theme="@style/Theme.PgpShield" />
+
+        <activity
             android:name=".api.ApiInsecureCryptoActivity"
             android:exported="false"
             android:theme="@style/Theme.PgpShield" />
@@ -190,9 +200,6 @@
                 <data android:scheme="content" android:host="*" android:pathPattern=".*\\.asc" />
                 <data android:scheme="content" android:host="*" android:pathPattern=".*\\.gpg" />
                 <data android:scheme="content" android:host="*" android:pathPattern=".*\\.pgp" />
-                <data android:scheme="file" android:host="*" android:pathPattern=".*\\.asc" />
-                <data android:scheme="file" android:host="*" android:pathPattern=".*\\.gpg" />
-                <data android:scheme="file" android:host="*" android:pathPattern=".*\\.pgp" />
             </intent-filter>
 
         </activity>
@@ -443,7 +450,9 @@
 
             android:authorities="ltechnologies.onionphone.pgpshield.provider.exported"
 
-            android:exported="true" />
+            android:exported="true"
+
+            android:permission="ltechnologies.onionphone.pgpshield.permission.API" />
 
 
 

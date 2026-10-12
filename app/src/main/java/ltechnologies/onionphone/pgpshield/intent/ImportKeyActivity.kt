@@ -169,9 +169,10 @@ class ImportKeyActivity : LockedIntentActivity() {
         uri.scheme.equals(OPENPGP4FPR_SCHEME, ignoreCase = true)
 
     private fun readUri(uri: Uri): ByteArray {
+        val allowed = ShareUriPolicy.requireContentUri(uri)
         return try {
-            contentResolver.openInputStream(uri)?.use { PgpIo.readLimited(it) }
-                ?: throw IllegalStateException(getString(R.string.intent_cannot_open_uri_fmt, uri))
+            contentResolver.openInputStream(allowed)?.use { PgpIo.readLimited(it) }
+                ?: throw IllegalStateException(getString(R.string.intent_cannot_open_uri_fmt, allowed))
         } catch (e: Exception) {
             throw IllegalStateException(getString(R.string.intent_failed_read_key_file), e)
         }

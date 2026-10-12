@@ -106,7 +106,7 @@ class OpenPgpCardUsbPort @Inject constructor(
             context,
             0,
             android.content.Intent(action).setPackage(context.packageName),
-            android.app.PendingIntent.FLAG_UPDATE_CURRENT or android.app.PendingIntent.FLAG_MUTABLE,
+            android.app.PendingIntent.FLAG_UPDATE_CURRENT or android.app.PendingIntent.FLAG_IMMUTABLE,
         )
         try {
             usb.requestPermission(device, pi)

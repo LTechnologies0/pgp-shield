@@ -97,16 +97,18 @@ class DecryptTextActivity : LockedIntentActivity() {
                                 var pass: CharArray? = null
                                 scope.launch {
                                     try {
-                                        val secret = IntentIoHelper.loadDecryptSecretKey(this@DecryptTextActivity, keyRepository, settingsRepository)
                                         val passChars = passphrase.takeIf { it.isNotBlank() }?.toCharArray()
                                             ?: error(getString(R.string.intent_enter_passphrase))
                                         pass = passChars
+                                        val cipherBytes = ciphertext.toByteArray(Charsets.UTF_8)
                                         val result = withContext(Dispatchers.Default) {
-                                            cryptoOperations.decrypt(
-                                                ciphertext.toByteArray(Charsets.UTF_8),
-                                                secret,
-                                                passChars,
-                                            )
+                                            IntentIoHelper.decryptTryingAllSecrets(
+                                                this@DecryptTextActivity,
+                                                keyRepository,
+                                                settingsRepository,
+                                            ) { secret ->
+                                                cryptoOperations.decrypt(cipherBytes, secret, passChars)
+                                            }
                                         }
                                         plaintext = String(result.plaintext, Charsets.UTF_8)
                                     } catch (e: Exception) {

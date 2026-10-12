@@ -16,7 +16,10 @@ object KeyIdParser {
     fun parse(value: String): Long? {
         val trimmed = value.trim().removePrefix("0x").removePrefix("0X")
         if (trimmed.isEmpty()) return null
-        return trimmed.toLongOrNull(16) ?: trimmed.toLongOrNull()
+        return trimmed.toULongOrNull(16)?.toLong()
+            ?: trimmed.toULongOrNull()?.toLong()
+            ?: trimmed.toLongOrNull(16)
+            ?: trimmed.toLongOrNull()
     }
 
     /** Parses a comma-separated list of key ids, skipping unparseable entries. */

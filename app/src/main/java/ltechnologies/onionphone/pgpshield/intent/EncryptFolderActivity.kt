@@ -154,6 +154,7 @@ class EncryptFolderActivity : LockedIntentActivity() {
         kotlinx.coroutines.coroutineScope {
             uris.mapIndexed { index, uri ->
                 async(Dispatchers.IO) {
+                    ShareUriPolicy.requireContentUri(uri)
                     val bytes = contentResolver.openInputStream(uri)?.use { PgpIo.readLimited(it) }
                         ?: error(getString(R.string.intent_could_not_read_path_fmt, paths[index]))
                     NamedFile(paths[index], bytes)

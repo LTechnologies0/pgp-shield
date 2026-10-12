@@ -70,7 +70,7 @@ class ExportedKeyProvider : ContentProvider() {
             } else {
                 val keysById = keyRepository.search("").associateBy { it.masterKeyId }
                 emails.flatMap { email ->
-                    userIdDao.findByUserIdFragment(email).mapNotNull { entity ->
+                    userIdDao.findByExactEmail(email).mapNotNull { entity ->
                         val summary = keysById[entity.masterKeyId] ?: return@mapNotNull null
                         // Align with encrypt gate: skip revoked / Never / expired / weak.
                         if (!keyRepository.isEncryptRecipientAllowed(summary.masterKeyId)) {

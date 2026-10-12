@@ -32,6 +32,7 @@ class KeyRingReader {
         val objectFactory = org.bouncycastle.openpgp.PGPObjectFactory(decoder, PgpFingerprints.calculator)
         val ring = objectFactory.nextObject() as? PGPPublicKeyRing
             ?: throw PgpException("No public key ring found")
+        KeyRingSignatureVerifier.verify(ring)
         return toInfo(ring.publicKey, publicKeys(ring), isSecret = false)
     }
 
@@ -41,12 +42,60 @@ class KeyRingReader {
         val objectFactory = org.bouncycastle.openpgp.PGPObjectFactory(decoder, PgpFingerprints.calculator)
         val ring = objectFactory.nextObject() as? PGPSecretKeyRing
             ?: throw PgpException("No secret key ring found")
+        KeyRingSignatureVerifier.verify(ring)
         val keys = ArrayList<PGPPublicKey>()
         val iter = ring.secretKeys
         while (iter.hasNext()) {
             keys.add(iter.next().publicKey)
         }
         return toInfo(ring.publicKey, keys, isSecret = true)
+    }
+
+    /**
+     * Parses every public/secret ring in [bytes] (keyboxes and concatenated armor).
+     *
+     * Each ring is independently signature-checked. Empty input throws.
+     */
+    fun readAllRings(bytes: ByteArray): List<ParsedKeyRing> {
+        val parsed = ArrayList<ParsedKeyRing>()
+        PGPUtil.getDecoderStream(bytes.inputStream()).use { decoder ->
+            val factory = org.bouncycastle.openpgp.PGPObjectFactory(decoder, PgpFingerprints.calculator)
+            while (true) {
+                when (val obj = factory.nextObject() ?: break) {
+                    is PGPPublicKeyRing -> {
+                        KeyRingSignatureVerifier.verify(obj)
+                        parsed.add(
+                            ParsedKeyRing(
+                                info = toInfo(obj.publicKey, publicKeys(obj), isSecret = false),
+                                armored = armorEncoded(obj.encoded),
+                                secret = false,
+                            ),
+                        )
+                    }
+                    is PGPSecretKeyRing -> {
+                        KeyRingSignatureVerifier.verify(obj)
+                        val keys = ArrayList<PGPPublicKey>()
+                        val iter = obj.secretKeys
+                        while (iter.hasNext()) keys.add(iter.next().publicKey)
+                        parsed.add(
+                            ParsedKeyRing(
+                                info = toInfo(obj.publicKey, keys, isSecret = true),
+                                armored = armorEncoded(obj.encoded),
+                                secret = true,
+                            ),
+                        )
+                    }
+                }
+            }
+        }
+        if (parsed.isEmpty()) throw PgpException("No key ring found")
+        return parsed
+    }
+
+    private fun armorEncoded(encoded: ByteArray): ByteArray {
+        val out = java.io.ByteArrayOutputStream()
+        org.bouncycastle.bcpg.ArmoredOutputStream(out).use { it.write(encoded) }
+        return out.toByteArray()
     }
 
     /**
@@ -165,7 +214,14 @@ class KeyRingReader {
         fun keyIdFromFingerprintHex(hex: String): Long {
             val clean = hex.replace(" ", "").uppercase()
             require(clean.length >= 16) { "Fingerprint too short" }
-            return clean.takeLast(16).toLong(16)
+            return clean.takeLast(16).toULong(16).toLong()
         }
     }
 }
+
+/** One ring extracted from a multi-ring import payload. */
+data class ParsedKeyRing(
+    val info: KeyRingInfo,
+    val armored: ByteArray,
+    val secret: Boolean,
+)
